@@ -1,0 +1,8 @@
+ToDo.txt
+node_modules
+.next
+dist
+tsconfig.tsbuildinfo
+.env
+.production.env
+.development.env

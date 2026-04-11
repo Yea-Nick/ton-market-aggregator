@@ -6,3 +6,7 @@ tsconfig.tsbuildinfo
 .env
 .production.env
 .development.env
+npm-debug.log
+.env.local
+.env.*.local
+coverage

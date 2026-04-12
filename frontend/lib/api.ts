@@ -1,7 +1,7 @@
 import { generateMockHistory } from './mock-data';
 import { HistoryResponse, LatestResponse, PricePoint, TimeRange, Exchange } from './types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost';
 
 function buildUrl(path: string, params: Record<string, string | undefined>) {
   const url = new URL(path, API_BASE_URL);

@@ -25,11 +25,6 @@ async function bootstrap() {
   app.useGlobalInterceptors(new RequestContextInterceptor());
   app.useWebSocketAdapter(new WsAdapter(app));
 
-  app.enableCors({
-    origin: config.corsOrigin,
-    credentials: false,
-  });
-
   app.setGlobalPrefix('api/v1');
 
   const swaggerConfig = new DocumentBuilder()

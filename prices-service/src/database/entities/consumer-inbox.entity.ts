@@ -16,8 +16,8 @@ export class ConsumerInboxEntity {
   @Column({ type: 'int' })
   partition!: number;
 
-  @Column({ type: 'bigint' })
-  offset!: string;
+  @Column({ type: 'bigint', name: 'partition_offset' })
+  partitionOffset!: string;
 
   @Column({ type: 'varchar', length: 50 })
   exchange!: string;

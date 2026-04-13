@@ -6,7 +6,7 @@ import {
   SUPPORTED_RANGES,
   SupportedExchange,
   SupportedRange,
-} from 'src/common/constants/prices.constants';
+} from '../../../common/constants/prices.constants';
 
 export class HistoryQueryDto {
   @ApiPropertyOptional({ default: 'TONUSDT' })

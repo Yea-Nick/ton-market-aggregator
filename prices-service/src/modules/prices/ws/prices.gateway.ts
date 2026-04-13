@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'crypto';
 import { IncomingMessage } from 'http';
 import WebSocket from 'ws';
-import { AppConfigService } from 'src/common/config/app-config.service';
+import { AppConfigService } from '../../../common/config/app-config.service';
 import { PriceStreamService } from '../services/price-stream.service';
 
 @WebSocketGateway({ path: '/ws/prices' })

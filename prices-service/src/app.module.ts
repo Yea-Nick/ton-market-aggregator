@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppConfigModule } from './common/config/app-config.module';
 import { AppConfigService } from './common/config/app-config.service';
 import { ConsumerInboxEntity } from './database/entities/consumer-inbox.entity';
 import { PriceTickEntity } from './database/entities/price-tick.entity';
@@ -9,11 +9,9 @@ import { PricesModule } from './modules/prices/prices.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: ['.env.local', '.env'],
-    }),
+    AppConfigModule,
     TypeOrmModule.forRootAsync({
+      imports: [AppConfigModule],
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
         type: 'postgres',
@@ -32,6 +30,5 @@ import { PricesModule } from './modules/prices/prices.module';
     HealthModule,
     PricesModule,
   ],
-  providers: [AppConfigService],
 })
-export class AppModule {}
+export class AppModule { }

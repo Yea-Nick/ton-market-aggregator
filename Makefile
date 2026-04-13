@@ -1,4 +1,4 @@
 dev: 
-	docker compose -f compose.yaml -env-file ./.env up --build
+	docker compose -f compose.yaml --env-file ./.env up --build
 prod:
-	docker compose -f compose.yaml -env-file ./.env up -d --build
+	docker compose -f compose.yaml --env-file ./.env up -d --build

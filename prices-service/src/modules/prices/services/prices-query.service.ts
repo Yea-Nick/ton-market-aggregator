@@ -5,7 +5,7 @@ import {
   RANGE_TO_INTERVAL_SQL,
   SUPPORTED_EXCHANGES,
   SupportedExchange,
-} from 'src/common/constants/prices.constants';
+} from '../../../common/constants/prices.constants';
 import { HistoryQueryDto } from '../dto/history-query.dto';
 
 interface HistoryPointRow {

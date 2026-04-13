@@ -2,7 +2,7 @@ create table if not exists consumer_inbox (
     event_id uuid primary key,
     topic varchar(255) not null,
     partition int not null,
-    offset bigint not null,
+    partition_offset bigint not null,
     exchange varchar(50) not null,
     symbol varchar(20) not null,
     received_at timestamptz not null default now()

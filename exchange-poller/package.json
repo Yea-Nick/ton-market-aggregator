@@ -1,0 +1,32 @@
+{
+  "name": "exchange-poller",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TON price exchange poller that fetches prices from multiple exchanges and publishes normalized events to Kafka",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dedust/sdk": "^0.8.7",
+    "@ston-fi/sdk": "^2.7.0",
+    "@ton/core": "^0.63.1",
+    "@ton/ton": "^16.2.3",
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "kafkajs": "^2.2.4",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.2.2",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

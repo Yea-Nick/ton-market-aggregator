@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConsumerInboxEntity } from 'src/database/entities/consumer-inbox.entity';
-import { PriceTickEntity } from 'src/database/entities/price-tick.entity';
+import { ConsumerInboxEntity } from '../../database/entities/consumer-inbox.entity';
+import { PriceTickEntity } from '../../database/entities/price-tick.entity';
 import { PricesController } from './controllers/prices.controller';
 import { KafkaConsumerService } from './services/kafka-consumer.service';
 import { PricesIngestService } from './services/prices-ingest.service';
@@ -20,4 +20,4 @@ import { PricesGateway } from './ws/prices.gateway';
     PricesGateway,
   ],
 })
-export class PricesModule {}
+export class PricesModule { }

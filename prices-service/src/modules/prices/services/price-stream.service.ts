@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { SupportedExchange } from 'src/common/constants/prices.constants';
+import { SupportedExchange } from '../../../common/constants/prices.constants';
 
 type StreamPoint = {
   eventId?: string;

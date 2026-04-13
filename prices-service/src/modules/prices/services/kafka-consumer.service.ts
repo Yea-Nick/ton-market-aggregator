@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Kafka, Consumer, logLevel } from 'kafkajs';
-import { AppConfigService } from 'src/common/config/app-config.service';
+import { AppConfigService } from '../../../common/config/app-config.service';
 import { PricesIngestService } from './prices-ingest.service';
 
 interface RawPriceEvent {
@@ -51,6 +51,8 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
       autoCommit: false,
       eachMessage: async ({ topic, partition, message }) => {
         if (!message.value) {
+          this.logger.warn(`Skipped empty message at ${topic}[${partition}]/${message.offset}`);
+          await this.commitOffset(topic, partition, message.offset);
           return;
         }
 
@@ -69,7 +71,7 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
           sourceTimestamp: parsed.sourceTimestamp,
           topic,
           partition,
-          offset: message.offset,
+          partitionOffset: message.offset,
         });
 
         await this.commitOffset(topic, partition, message.offset);

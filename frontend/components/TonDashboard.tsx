@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { fetchPriceHistory } from '@/lib/api';
 import { Exchange, EXCHANGES, PricePoint, TimeRange } from '@/lib/types';
@@ -73,11 +74,22 @@ export function TonDashboard({
       <section className="hero card">
         <div>
           <div className="hero-kicker">Real-time TON market stream</div>
-          <h1>TON price dashboard</h1>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Image
+              src="/toncoin.png"
+              alt="Toncoin logo"
+              width={128}
+              height={128}
+              priority
+            />
+            <h1>TON price dashboard</h1>
+          </div>
         </div>
+
         <div className="hero-side">
           <div className="hero-badge">{symbol}</div>
-          <div className="hero-hint">{isLoading ? 'Обновляем историю…' : 'Live mode enabled'}</div>
+          <div className="hero-hint">{isLoading ? 'Updating history...' : 'Live mode enabled'}</div>
         </div>
       </section>
 
@@ -98,9 +110,9 @@ export function TonDashboard({
       <section className="card chart-card">
         <div className="section-title-row">
           <div>
-            <div className="section-title">График</div>
+            <div className="section-title">Chart</div>
             <div className="section-subtitle">
-              Линии по биржам. Диапазон: {range}. Активные источники: {selectedExchanges.length}
+              Range: {range}. Active sources: {selectedExchanges.length}
             </div>
           </div>
         </div>

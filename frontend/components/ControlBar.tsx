@@ -13,7 +13,7 @@ export function ControlBar({ range, exchanges, onRangeChange, onExchangeToggle }
   return (
     <div className="control-panel card">
       <div className="control-group">
-        <span className="control-title">Диапазон</span>
+        <span className="control-title">Range</span>
         <div className="button-group">
           {TIME_RANGES.map((item) => (
             <button
@@ -29,7 +29,7 @@ export function ControlBar({ range, exchanges, onRangeChange, onExchangeToggle }
       </div>
 
       <div className="control-group">
-        <span className="control-title">Биржи</span>
+        <span className="control-title">Markets</span>
         <div className="checkbox-grid">
           {EXCHANGES.map((exchange) => {
             const checked = exchanges.includes(exchange);

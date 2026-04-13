@@ -19,7 +19,7 @@ export function StatCards({ rows, exchanges, connectionState, lastUpdateAt }: St
       </div>
 
       <div className="card stat-card">
-        <div className="stat-label">Последнее обновление</div>
+        <div className="stat-label">Last update</div>
         <div className="stat-value-small">{lastUpdateAt ? formatDateTime(lastUpdateAt) : '—'}</div>
       </div>
 

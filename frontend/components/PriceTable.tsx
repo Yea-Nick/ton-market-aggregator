@@ -4,21 +4,21 @@ import { formatExchangeName } from '@/lib/chart';
 import { Exchange } from '@/lib/types';
 
 interface PriceTableProps {
-  latestMap: Record<string, { price: number; timestamp: string }>;
+  latestMap: Record<string, { price: number; timestamp: string; }>;
   exchanges: Exchange[];
 }
 
 export function PriceTable({ latestMap, exchanges }: PriceTableProps) {
   return (
     <div className="card table-card">
-      <div className="section-title">Последние цены</div>
+      <div className="section-title">Latest prices</div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Биржа</th>
-              <th>Цена</th>
-              <th>Время</th>
+              <th>Market</th>
+              <th>Price</th>
+              <th>Time</th>
             </tr>
           </thead>
           <tbody>

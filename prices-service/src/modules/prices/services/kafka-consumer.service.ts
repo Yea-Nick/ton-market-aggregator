@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { Kafka, Consumer, logLevel } from 'kafkajs';
 import { AppConfigService } from '../../../common/config/app-config.service';
+import {
+  SUPPORTED_EXCHANGES,
+  SupportedExchange,
+} from '../../../common/constants/prices.constants';
 import { PricesIngestService } from './prices-ingest.service';
 
 interface RawPriceEvent {
@@ -13,6 +17,15 @@ interface RawPriceEvent {
   exchange: string;
   symbol: string;
   price: number | string;
+  sourceTimestamp: string;
+  fetchedAt?: string;
+}
+
+interface ParsedPriceEvent {
+  eventId: string;
+  exchange: SupportedExchange;
+  symbol: string;
+  price: number;
   sourceTimestamp: string;
   fetchedAt?: string;
 }
@@ -65,7 +78,7 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
 
         await this.pricesIngestService.process({
           eventId: parsed.eventId,
-          exchange: parsed.exchange.toLowerCase(),
+          exchange: parsed.exchange.toLowerCase() as SupportedExchange,
           symbol: parsed.symbol.toUpperCase(),
           price: Number(parsed.price),
           sourceTimestamp: parsed.sourceTimestamp,
@@ -87,9 +100,10 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private parseMessage(raw: string): RawPriceEvent | null {
+  private parseMessage(raw: string): ParsedPriceEvent | null {
     try {
       const payload = JSON.parse(raw) as Partial<RawPriceEvent>;
+
       if (
         !payload.eventId ||
         !payload.exchange ||
@@ -100,13 +114,33 @@ export class KafkaConsumerService implements OnModuleInit, OnModuleDestroy {
         return null;
       }
 
+      const exchange = String(payload.exchange).trim().toLowerCase();
+      if (!SUPPORTED_EXCHANGES.includes(exchange as SupportedExchange)) {
+        return null;
+      }
+
+      const symbol = String(payload.symbol).trim().toUpperCase();
+      if (!symbol) {
+        return null;
+      }
+
+      const price = Number(payload.price);
+      if (!Number.isFinite(price)) {
+        return null;
+      }
+
+      const sourceDate = new Date(payload.sourceTimestamp);
+      if (Number.isNaN(sourceDate.getTime())) {
+        return null;
+      }
+
       return {
-        eventId: payload.eventId,
-        exchange: payload.exchange,
-        symbol: payload.symbol,
-        price: payload.price,
-        sourceTimestamp: payload.sourceTimestamp,
-        fetchedAt: payload.fetchedAt,
+        eventId: String(payload.eventId),
+        exchange: exchange as SupportedExchange,
+        symbol,
+        price,
+        sourceTimestamp: sourceDate.toISOString(),
+        fetchedAt: payload.fetchedAt ? String(payload.fetchedAt) : undefined,
       };
     } catch {
       return null;

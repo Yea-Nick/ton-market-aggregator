@@ -97,8 +97,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL}
+        NEXT_PUBLIC_API_PREFIX: ${NEXT_PUBLIC_API_PREFIX}
         NEXT_PUBLIC_SYMBOL: ${NEXT_PUBLIC_SYMBOL}
     restart: unless-stopped
     env_file:

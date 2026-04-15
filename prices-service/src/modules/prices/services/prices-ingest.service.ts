@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { SupportedExchange } from '../../../common/constants/prices.constants';
 import { PriceStreamService } from './price-stream.service';
 
-export interface IngestPriceMessage {
+interface ProcessPriceTickParams {
   eventId: string;
-  exchange: string;
+  exchange: SupportedExchange;
   symbol: string;
   price: number;
   sourceTimestamp: string;
@@ -23,15 +24,20 @@ export class PricesIngestService {
     private readonly priceStreamService: PriceStreamService,
   ) { }
 
-  async process(message: IngestPriceMessage): Promise<{ duplicate: boolean; }> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  async process(message: ProcessPriceTickParams): Promise<void> {
+    let shouldBroadcast = false;
 
-    try {
-      const inboxInsert: { event_id: string; }[] = await queryRunner.query(
+    await this.dataSource.transaction(async (manager) => {
+      const inserted = await manager.query(
         `
-        insert into consumer_inbox(event_id, topic, partition, partition_offset, exchange, symbol)
+        insert into consumer_inbox (
+          event_id,
+          topic,
+          partition,
+          partition_offset,
+          exchange,
+          symbol
+        )
         values ($1, $2, $3, $4, $5, $6)
         on conflict (event_id) do nothing
         returning event_id
@@ -46,17 +52,20 @@ export class PricesIngestService {
         ],
       );
 
-      const inserted = inboxInsert.length > 0;
-
-      if (!inserted) {
-        await queryRunner.commitTransaction();
-        this.logger.debug(`Duplicate event skipped: ${message.eventId}`);
-        return { duplicate: true };
+      if (!inserted.length) {
+        this.logger.debug(`Skipped duplicate event: ${message.eventId}`);
+        return;
       }
 
-      await queryRunner.query(
+      await manager.query(
         `
-        insert into price_ticks(event_id, exchange, symbol, price, source_timestamp)
+        insert into price_ticks (
+          event_id,
+          exchange,
+          symbol,
+          price,
+          source_timestamp
+        )
         values ($1, $2, $3, $4, $5)
         `,
         [
@@ -68,26 +77,22 @@ export class PricesIngestService {
         ],
       );
 
-      await queryRunner.commitTransaction();
+      shouldBroadcast = true;
+    });
 
-      try {
-        this.priceStreamService.broadcast({
-          eventId: message.eventId,
-          exchange: message.exchange,
-          symbol: message.symbol,
-          price: message.price,
-          timestamp: new Date(message.sourceTimestamp).toISOString(),
-        });
-      } catch (err) {
-        this.logger.warn(`Broadcast failed for event ${message.eventId}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      return { duplicate: false };
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
+    if (!shouldBroadcast) {
+      return;
     }
+
+    this.priceStreamService.ingestTick({
+      exchange: message.exchange,
+      symbol: message.symbol,
+      price: message.price,
+      timestamp: new Date(message.sourceTimestamp).toISOString(),
+    });
+
+    this.logger.debug(
+      `Processed tick: ${message.symbol} ${message.exchange} ${message.price} @ ${message.sourceTimestamp}`,
+    );
   }
 }

@@ -1,7 +1,27 @@
+x-logging: &default-logging
+  logging:
+    driver: "local"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    <<: *default-logging
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_connections=50
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -14,11 +34,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    stop_grace_period: 30s
 
   kafka:
     image: apache/kafka:4.1.2
     hostname: kafka
     restart: unless-stopped
+    <<: *default-logging
     environment:
       CLUSTER_ID: "abcdefghijklmnopqrstuv"
       KAFKA_NODE_ID: "1"
@@ -33,39 +55,61 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: "1"
     volumes:
       - kafka_data:/tmp/kraft-combined-logs
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1",
-        ]
+        ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
     restart: unless-stopped
+    <<: *default-logging
+    profiles: ["debug"]
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: "local"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+
+  kafka-init:
+    image: apache/kafka:4.1.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+      --create --if-not-exists \
+      --topic ton.prices.raw \
+      --partitions 1 \
+      --replication-factor 1 \
+      --config retention.ms=21600000 \
+      --config retention.bytes=1073741824
+      "
+    restart: "no"
 
   prices-service:
     build:
       context: ./prices-service
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *default-logging
+    init: true
     depends_on:
+      kafka-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       kafka:
@@ -77,13 +121,29 @@ services:
       POSTGRES_PORT: 5432
       KAFKA_BROKERS: kafka:9092
       KAFKA_CLIENT_ID: prices-service
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   exchange-poller:
     build:
       context: ./exchange-poller
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *default-logging
+    init: true
     depends_on:
+      kafka-init:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
     env_file:
@@ -100,17 +160,47 @@ services:
         NEXT_PUBLIC_API_PREFIX: ${NEXT_PUBLIC_API_PREFIX}
         NEXT_PUBLIC_SYMBOL: ${NEXT_PUBLIC_SYMBOL}
     restart: unless-stopped
+    <<: *default-logging
+    init: true
     env_file:
       - ./.env
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  certbot:
+    image: certbot/certbot:v5.3.1
+    container_name: certbot
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: /bin/sh -c
+    command: >
+      "trap exit TERM;
+       while :; do
+         certbot renew --webroot -w /var/www/certbot --quiet;
+         sleep 12h;
+       done"
+    restart: "no"
 
   nginx:
     image: nginx:stable-alpine3.23-perl
     restart: unless-stopped
+    <<: *default-logging
     depends_on:
-      frontend: 
-        condition: service_started
+      frontend:
+        condition: service_healthy
       prices-service:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "80:80"
     volumes:

@@ -190,7 +190,7 @@ services:
          certbot renew --webroot -w /var/www/certbot --quiet;
          sleep 12h;
        done"
-    restart: "no"
+    restart: unless-stopped
 
   nginx:
     image: nginx:stable-alpine3.23-perl
@@ -203,9 +203,14 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
 
 volumes:
   postgres_data:
   kafka_data:
+  letsencrypt:
+  certbot_www:

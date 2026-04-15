@@ -7,6 +7,7 @@ import {
   SupportedExchange,
 } from '../../../common/constants/prices.constants';
 import { HistoryQueryDto } from '../dto/history-query.dto';
+import { RANGE_TO_BUCKET_SECONDS } from '../utils/price-time.util';
 
 interface HistoryPointRow {
   exchange: SupportedExchange;
@@ -29,17 +30,42 @@ export class PricesQueryService {
   async getHistory(query: HistoryQueryDto) {
     const exchanges = this.normalizeExchanges(query.exchanges);
     const interval = RANGE_TO_INTERVAL_SQL[query.range];
+    const bucketSeconds = RANGE_TO_BUCKET_SECONDS[query.range];
 
     const rows: HistoryPointRow[] = await this.dataSource.query(
       `
-      select exchange, symbol, price, source_timestamp as timestamp
-      from price_ticks
-      where symbol = $1
-        and exchange = any($2)
-        and source_timestamp >= now() - $3::interval
-      order by source_timestamp asc
-      `,
-      [query.symbol, exchanges, interval],
+    with scoped as (
+      select
+        pt.exchange,
+        pt.symbol,
+        pt.price,
+        pt.source_timestamp,
+        to_timestamp(
+          floor(extract(epoch from pt.source_timestamp) / $4)::bigint * $4
+        ) as bucket_timestamp
+      from price_ticks pt
+      where pt.symbol = $1
+        and pt.exchange = any($2)
+        and pt.source_timestamp >= now() - $3::interval
+    ),
+    latest_in_bucket as (
+      select distinct on (exchange, symbol, bucket_timestamp)
+        exchange,
+        symbol,
+        price,
+        bucket_timestamp as timestamp
+      from scoped
+      order by exchange, symbol, bucket_timestamp, source_timestamp desc
+    )
+    select
+      exchange,
+      symbol,
+      price,
+      timestamp
+    from latest_in_bucket
+    order by timestamp asc, exchange asc
+    `,
+      [query.symbol, exchanges, interval, bucketSeconds],
     );
 
     return rows.map((row) => ({

@@ -9,58 +9,63 @@ interface ControlBarProps {
   onExchangeToggle: (value: Exchange) => void;
 }
 
-export function ControlBar({ range, exchanges, onRangeChange, onExchangeToggle }: ControlBarProps) {
-  return (
-    <div className="control-panel card">
-      <div className="control-group">
-        <span className="control-title">Диапазон</span>
-        <div className="button-group">
-          {TIME_RANGES.map((item) => (
-            <button
-              key={item}
-              className={item === range ? 'chip chip-active' : 'chip'}
-              onClick={() => onRangeChange(item)}
-              type="button"
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-      </div>
+const EXCHANGE_LABELS: Record<Exchange, string> = {
+  bybit: 'Bybit',
+  bitget: 'Bitget',
+  stonfi: 'STON.fi',
+  dedust: 'DeDust',
+};
 
-      <div className="control-group">
-        <span className="control-title">Биржи</span>
-        <div className="checkbox-grid">
-          {EXCHANGES.map((exchange) => {
-            const checked = exchanges.includes(exchange);
+export function ControlBar({
+  range,
+  exchanges,
+  onRangeChange,
+  onExchangeToggle,
+}: ControlBarProps) {
+  return (
+    <section className="terminal-toolbar card">
+      <div className="toolbar-block">
+        <div className="toolbar-label">Range</div>
+        <div className="toolbar-chips">
+          {TIME_RANGES.map((item) => {
+            const active = item === range;
+
             return (
-              <label key={exchange} className={checked ? 'checkbox-item checkbox-item-active' : 'checkbox-item'}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => onExchangeToggle(exchange)}
-                />
-                <span>{formatExchangeLabel(exchange)}</span>
-              </label>
+              <button
+                key={item}
+                type="button"
+                onClick={() => onRangeChange(item)}
+                className={active ? 'toolbar-chip toolbar-chip-active' : 'toolbar-chip'}
+              >
+                {item}
+              </button>
             );
           })}
         </div>
       </div>
-    </div>
-  );
-}
 
-function formatExchangeLabel(exchange: Exchange): string {
-  switch (exchange) {
-    case 'stonfi':
-      return 'STON.fi';
-    case 'dedust':
-      return 'DeDust';
-    case 'bitget':
-      return 'Bitget';
-    case 'bybit':
-      return 'Bybit';
-    default:
-      return exchange;
-  }
+      <div className="toolbar-divider" />
+
+      <div className="toolbar-block toolbar-block-grow">
+        <div className="toolbar-label">Exchanges</div>
+        <div className="toolbar-chips">
+          {EXCHANGES.map((exchange) => {
+            const active = exchanges.includes(exchange);
+
+            return (
+              <button
+                key={exchange}
+                type="button"
+                onClick={() => onExchangeToggle(exchange)}
+                className={active ? 'toolbar-chip toolbar-chip-active' : 'toolbar-chip'}
+                aria-pressed={active}
+              >
+                {EXCHANGE_LABELS[exchange]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 }

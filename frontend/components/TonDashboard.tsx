@@ -1,13 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
+import Image from 'next/image';
+import { useEffect, useMemo, useState } from 'react';
 import { fetchPriceHistory } from '@/lib/api';
 import { Exchange, EXCHANGES, PricePoint, TimeRange } from '@/lib/types';
 import { ControlBar } from './ControlBar';
-import { PriceChart } from './PriceChart';
-import { PriceTable } from './PriceTable';
 import { StatCards } from './StatCards';
 import { useTonPriceStream } from '@/hooks/useTonPriceStream';
+
+const PriceChart = dynamic(
+  () => import('./PriceChart').then((mod) => mod.PriceChart),
+  { ssr: false },
+);
 
 interface TonDashboardProps {
   symbol: string;
@@ -68,16 +73,48 @@ export function TonDashboard({
     });
   };
 
+  const heroPrice = useMemo(() => {
+    const values = selectedExchanges
+      .map((exchange) => latestMap[exchange]?.price)
+      .filter((value): value is number => typeof value === 'number');
+
+    if (!values.length) {
+      return null;
+    }
+
+    const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return avg;
+  }, [latestMap, selectedExchanges]);
+
   return (
     <main className="page-shell">
       <section className="hero card">
-        <div>
-          <div className="hero-kicker">Real-time TON market stream</div>
-          <h1>TON price dashboard</h1>
+        <div className="hero-left">
+          <div className="hero-row">
+            <Image
+              src="/toncoin.png"
+              alt="Toncoin logo"
+              width={32}
+              height={32}
+              priority
+            />
+            <div className="hero-title">TON market terminal</div>
+          </div>
+
+          <div className="hero-price">
+            {heroPrice !== null ? heroPrice.toFixed(4) : '—'}
+          </div>
+
+          <div className="hero-sub">
+            Aggregated live price across selected exchanges
+          </div>
         </div>
+
         <div className="hero-side">
           <div className="hero-badge">{symbol}</div>
-          <div className="hero-hint">{isLoading ? 'Обновляем историю…' : 'Live mode enabled'}</div>
+          <div className="hero-hint">
+            {isLoading ? 'Updating history...' : 'Live mode enabled'}
+          </div>
         </div>
       </section>
 
@@ -98,16 +135,14 @@ export function TonDashboard({
       <section className="card chart-card">
         <div className="section-title-row">
           <div>
-            <div className="section-title">График</div>
+            <div className="section-title">Chart</div>
             <div className="section-subtitle">
-              Линии по биржам. Диапазон: {range}. Активные источники: {selectedExchanges.length}
+              Range: {range}. Active sources: {selectedExchanges.length}
             </div>
           </div>
         </div>
-        <PriceChart rows={rows} exchanges={selectedExchanges} />
+        <PriceChart rows={rows} exchanges={selectedExchanges} range={range} />
       </section>
-
-      <PriceTable latestMap={latestMap} exchanges={selectedExchanges} />
     </main>
   );
 }

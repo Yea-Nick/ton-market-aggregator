@@ -1,52 +1,81 @@
-import { ChartRow, EXCHANGES, Exchange, PricePoint } from './types';
+import { Exchange, EXCHANGES, PricePoint, TimeRange } from './types';
 
-export function mergePointsToChartRows(points: PricePoint[]): ChartRow[] {
-  const rows = new Map<string, ChartRow>();
+export interface ChartRow {
+  timestamp: string;
+  bybit: number | null;
+  bitget: number | null;
+  stonfi: number | null;
+  dedust: number | null;
+}
+
+export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[] {
+  const rowsMap = new Map<string, ChartRow>();
 
   for (const point of points) {
-    const bucket = point.timestamp;
-    const existing = rows.get(bucket) ?? {
-      timestamp: bucket,
-      bybit: null,
-      bitget: null,
-      stonfi: null,
-      dedust: null,
-    };
+    const existing = rowsMap.get(point.timestamp);
 
-    existing[point.exchange] = point.price;
-    rows.set(bucket, existing);
+    if (existing) {
+      existing[point.exchange] = point.price;
+      continue;
+    }
+
+    rowsMap.set(point.timestamp, {
+      timestamp: point.timestamp,
+      bybit: point.exchange === 'bybit' ? point.price : null,
+      bitget: point.exchange === 'bitget' ? point.price : null,
+      stonfi: point.exchange === 'stonfi' ? point.price : null,
+      dedust: point.exchange === 'dedust' ? point.price : null,
+    });
   }
 
-  return Array.from(rows.values()).sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  return Array.from(rowsMap.values()).sort(
+    (left, right) =>
+      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
 }
 
-export function upsertLivePoint(rows: ChartRow[], point: PricePoint): ChartRow[] {
-  const next = [...rows];
-  const index = next.findIndex((row) => row.timestamp === point.timestamp);
+export function upsertLivePoint(
+  rows: ChartRow[],
+  point: PricePoint,
+  _range: TimeRange,
+): ChartRow[] {
+  const nextRows = [...rows];
+  const existingIndex = nextRows.findIndex((row) => row.timestamp === point.timestamp);
 
-  if (index >= 0) {
-    next[index] = {
-      ...next[index],
+  if (existingIndex >= 0) {
+    nextRows[existingIndex] = {
+      ...nextRows[existingIndex],
       [point.exchange]: point.price,
     };
-    return next;
+
+    return nextRows;
   }
 
-  const newRow: ChartRow = {
+  nextRows.push({
     timestamp: point.timestamp,
-    bybit: null,
-    bitget: null,
-    stonfi: null,
-    dedust: null,
-    [point.exchange]: point.price,
-  };
+    bybit: point.exchange === 'bybit' ? point.price : null,
+    bitget: point.exchange === 'bitget' ? point.price : null,
+    stonfi: point.exchange === 'stonfi' ? point.price : null,
+    dedust: point.exchange === 'dedust' ? point.price : null,
+  });
 
-  next.push(newRow);
-  next.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  nextRows.sort(
+    (left, right) =>
+      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  );
 
-  return next;
+  return nextRows;
+}
+
+export function getLastValue(rows: ChartRow[], exchange: Exchange): number | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const value = rows[index][exchange];
+    if (typeof value === 'number') {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 export function formatExchangeName(exchange: Exchange): string {
@@ -64,38 +93,69 @@ export function formatExchangeName(exchange: Exchange): string {
   }
 }
 
-export function formatChartTime(timestamp: string): string {
-  const date = new Date(timestamp);
+function toDate(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
-  return new Intl.DateTimeFormat('ru-RU', {
+export function formatAxisTime(timestamp: string, range: TimeRange): string {
+  const date = toDate(timestamp);
+
+  if (!date) {
+    return '—';
+  }
+
+  if (range === '15m' || range === '1h') {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
   }).format(date);
 }
 
-export function getLastValue(rows: ChartRow[], exchange: Exchange): number | null {
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const value = rows[i][exchange];
-    if (typeof value === 'number') {
-      return value;
-    }
+export function formatTooltipTime(timestamp: string): string {
+  const date = toDate(timestamp);
+
+  if (!date) {
+    return '—';
   }
 
-  return null;
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(date);
 }
 
-export function getLastTimestamp(rows: ChartRow[]): string | null {
-  return rows.length ? rows[rows.length - 1].timestamp : null;
-}
+export function formatUiDateTime(timestamp: string | null): string {
+  if (!timestamp) {
+    return '—';
+  }
 
-export function pruneRows(rows: ChartRow[], maxRows = 400): ChartRow[] {
-  return rows.length > maxRows ? rows.slice(rows.length - maxRows) : rows;
-}
+  const date = toDate(timestamp);
 
-export function hasExchangeData(rows: ChartRow[], exchange: Exchange): boolean {
-  return rows.some((row) => typeof row[exchange] === 'number');
+  if (!date) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(date);
 }
 
 export { EXCHANGES };

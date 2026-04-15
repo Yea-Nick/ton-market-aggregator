@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchLatestPrices, getWebSocketUrl } from '@/lib/api';
-import { getLastTimestamp, mergePointsToChartRows, pruneRows, upsertLivePoint } from '@/lib/chart';
-import { ChartRow, Exchange, PricePoint, TimeRange } from '@/lib/types';
+import { useEffect, useMemo, useState } from 'react';
+import { getWebSocketUrl } from '@/lib/api';
+import { PricePoint, Exchange, TimeRange } from '@/lib/types';
+import { ChartRow, toChartRows, upsertLivePoint } from '@/lib/chart';
 
 interface UseTonPriceStreamParams {
   symbol: string;
@@ -12,94 +12,170 @@ interface UseTonPriceStreamParams {
   initialPoints: PricePoint[];
 }
 
-interface WebSocketEnvelope {
-  type?: string;
-  data?: PricePoint;
-  exchange?: Exchange;
-  symbol?: string;
-  price?: number;
-  timestamp?: string;
+interface LatestMapValue {
+  price: number;
+  timestamp: string;
 }
 
-export function useTonPriceStream({ symbol, range, exchanges, initialPoints }: UseTonPriceStreamParams) {
-  const [rows, setRows] = useState<ChartRow[]>(() => mergePointsToChartRows(initialPoints));
-  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(() => getLastTimestamp(mergePointsToChartRows(initialPoints)));
-  const [latestMap, setLatestMap] = useState<Record<string, { price: number; timestamp: string }>>({});
-  const socketRef = useRef<WebSocket | null>(null);
+type ConnectionState = 'connecting' | 'connected' | 'disconnected';
+
+function normalizeIncomingPoint(payload: unknown): PricePoint | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const candidate =
+    'data' in payload &&
+      payload.data &&
+      typeof payload.data === 'object'
+      ? payload.data
+      : payload;
+
+  if (!candidate || typeof candidate !== 'object') {
+    return null;
+  }
+
+  const rawExchange =
+    'exchange' in candidate ? candidate.exchange : undefined;
+  const rawSymbol =
+    'symbol' in candidate ? candidate.symbol : undefined;
+  const rawPrice =
+    'price' in candidate ? candidate.price : undefined;
+  const rawTimestamp =
+    'timestamp' in candidate
+      ? candidate.timestamp
+      : 'sourceTimestamp' in candidate
+        ? candidate.sourceTimestamp
+        : undefined;
+
+  if (
+    typeof rawExchange !== 'string' ||
+    typeof rawSymbol !== 'string' ||
+    (typeof rawPrice !== 'number' && typeof rawPrice !== 'string') ||
+    typeof rawTimestamp !== 'string'
+  ) {
+    return null;
+  }
+
+  const price = Number(rawPrice);
+
+  if (!Number.isFinite(price)) {
+    return null;
+  }
+
+  const timestamp = new Date(rawTimestamp);
+  if (Number.isNaN(timestamp.getTime())) {
+    return null;
+  }
+
+  return {
+    exchange: rawExchange as Exchange,
+    symbol: rawSymbol,
+    price,
+    timestamp: timestamp.toISOString(),
+  };
+}
+
+export function useTonPriceStream({
+  symbol,
+  range,
+  exchanges,
+  initialPoints,
+}: UseTonPriceStreamParams) {
+  const [rows, setRows] = useState<ChartRow[]>(() => toChartRows(initialPoints, range));
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
+  const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(null);
+  const [latestMap, setLatestMap] = useState<Record<string, LatestMapValue>>({});
 
   useEffect(() => {
-    setRows(mergePointsToChartRows(initialPoints));
-    setLastUpdateAt(getLastTimestamp(mergePointsToChartRows(initialPoints)));
-  }, [initialPoints]);
+    setRows(toChartRows(initialPoints, range));
 
-  useEffect(() => {
-    let cancelled = false;
+    const nextLatestMap: Record<string, LatestMapValue> = {};
 
-    fetchLatestPrices(symbol).then((items) => {
-      if (cancelled) {
-        return;
+    for (const point of initialPoints) {
+      const current = nextLatestMap[point.exchange];
+
+      if (
+        !current ||
+        new Date(point.timestamp).getTime() >= new Date(current.timestamp).getTime()
+      ) {
+        nextLatestMap[point.exchange] = {
+          price: point.price,
+          timestamp: point.timestamp,
+        };
       }
+    }
 
-      const map = items.reduce<Record<string, { price: number; timestamp: string }>>((acc, item) => {
-        acc[item.exchange] = { price: item.price, timestamp: item.timestamp };
-        return acc;
-      }, {});
-
-      setLatestMap(map);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [symbol]);
+    setLatestMap(nextLatestMap);
+  }, [initialPoints, range]);
 
   useEffect(() => {
+    const socket = new WebSocket(getWebSocketUrl(symbol, range, exchanges));
+
     setConnectionState('connecting');
 
-    const socket = new WebSocket(getWebSocketUrl(symbol, range, exchanges));
-    socketRef.current = socket;
+    socket.onopen = () => {
+      setConnectionState('connected');
+    };
 
-    socket.onopen = () => setConnectionState('connected');
-    socket.onclose = () => setConnectionState('disconnected');
-    socket.onerror = () => setConnectionState('disconnected');
+    socket.onclose = () => {
+      setConnectionState('disconnected');
+    };
+
+    socket.onerror = () => {
+      setConnectionState('disconnected');
+    };
 
     socket.onmessage = (event) => {
       try {
-        const payload = JSON.parse(event.data) as WebSocketEnvelope;
-        const point = normalizeWebSocketPayload(payload);
+        const rawPayload = JSON.parse(event.data);
+        const point = normalizeIncomingPoint(rawPayload);
 
-        if (!point || !exchanges.includes(point.exchange)) {
+        if (!point) {
+          console.warn('Ignored websocket payload with unknown shape:', rawPayload);
           return;
         }
 
-        setRows((prev) => pruneRows(upsertLivePoint(prev, point)));
-        setLastUpdateAt(point.timestamp);
-        setLatestMap((prev) => ({
-          ...prev,
-          [point.exchange]: { price: point.price, timestamp: point.timestamp },
+        if (point.symbol !== symbol) {
+          return;
+        }
+
+        if (!exchanges.includes(point.exchange)) {
+          return;
+        }
+
+        setRows((current) => {
+          const next = upsertLivePoint(current, point, range);
+          return next.length > 500 ? next.slice(next.length - 500) : next;
+        });
+
+        setLatestMap((current) => ({
+          ...current,
+          [point.exchange]: {
+            price: point.price,
+            timestamp: point.timestamp,
+          },
         }));
-      } catch {
-        // Ignore malformed payloads.
+
+        setLastUpdateAt(point.timestamp);
+      } catch (error) {
+        console.warn('Failed to process websocket message:', error);
       }
     };
 
     return () => {
       socket.close();
-      socketRef.current = null;
     };
   }, [symbol, range, exchanges]);
 
   const filteredRows = useMemo(() => {
-    return rows.map((row) => {
-      const nextRow: ChartRow = { ...row };
-      for (const exchange of ['bybit', 'bitget', 'stonfi', 'dedust'] as Exchange[]) {
-        if (!exchanges.includes(exchange)) {
-          nextRow[exchange] = null;
-        }
-      }
-      return nextRow;
-    });
+    return rows.map((row) => ({
+      timestamp: row.timestamp,
+      bybit: exchanges.includes('bybit') ? row.bybit : null,
+      bitget: exchanges.includes('bitget') ? row.bitget : null,
+      stonfi: exchanges.includes('stonfi') ? row.stonfi : null,
+      dedust: exchanges.includes('dedust') ? row.dedust : null,
+    }));
   }, [rows, exchanges]);
 
   return {
@@ -108,21 +184,4 @@ export function useTonPriceStream({ symbol, range, exchanges, initialPoints }: U
     lastUpdateAt,
     latestMap,
   };
-}
-
-function normalizeWebSocketPayload(payload: WebSocketEnvelope): PricePoint | null {
-  if (payload.data) {
-    return payload.data;
-  }
-
-  if (payload.exchange && payload.symbol && payload.timestamp && typeof payload.price === 'number') {
-    return {
-      exchange: payload.exchange,
-      symbol: payload.symbol,
-      timestamp: payload.timestamp,
-      price: payload.price,
-    };
-  }
-
-  return null;
 }

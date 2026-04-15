@@ -1,48 +1,88 @@
 import { Injectable } from '@nestjs/common';
-import { SupportedExchange } from '../../../common/constants/prices.constants';
+import { WebSocket } from 'ws';
+import {
+  SupportedExchange,
+  SupportedRange,
+} from '../../../common/constants/prices.constants';
+import { bucketTimestamp } from '../utils/price-time.util';
 
-type StreamPoint = {
-  eventId?: string;
-  exchange: SupportedExchange | string;
+export interface SubscriptionFilter {
+  symbol: string;
+  exchanges: SupportedExchange[];
+  range: SupportedRange;
+}
+
+interface LatestValue {
+  price: number;
+  timestamp: string;
+}
+
+interface BroadcastPoint {
+  exchange: SupportedExchange;
   symbol: string;
   price: number;
   timestamp: string;
-};
-
-type SubscriptionFilter = {
-  symbol: string;
-  exchanges: string[];
-};
-
-type Subscriber = {
-  id: string;
-  filter: SubscriptionFilter;
-  send: (payload: string) => void;
-};
+}
 
 @Injectable()
 export class PriceStreamService {
-  private readonly subscribers = new Map<string, Subscriber>();
+  private readonly clients = new Map<WebSocket, SubscriptionFilter>();
 
-  register(subscriber: Subscriber): void {
-    this.subscribers.set(subscriber.id, subscriber);
+  private readonly latestBySymbol = new Map<
+    string,
+    Partial<Record<SupportedExchange, LatestValue>>
+  >();
+
+  registerClient(client: WebSocket, filter: SubscriptionFilter): void {
+    this.clients.set(client, filter);
   }
 
-  unregister(id: string): void {
-    this.subscribers.delete(id);
+  unregisterClient(client: WebSocket): void {
+    this.clients.delete(client);
   }
 
-  broadcast(point: StreamPoint): void {
-    const payload = JSON.stringify({ type: 'prices.tick', data: point });
+  ingestTick(point: BroadcastPoint): void {
+    const symbol = point.symbol.toUpperCase();
+    const current = this.latestBySymbol.get(symbol) ?? {};
 
-    for (const subscriber of this.subscribers.values()) {
-      const sameSymbol = subscriber.filter.symbol.toUpperCase() === point.symbol.toUpperCase();
-      const exchangeAllowed =
-        subscriber.filter.exchanges.length === 0 ||
-        subscriber.filter.exchanges.includes(point.exchange.toLowerCase());
+    current[point.exchange] = {
+      price: point.price,
+      timestamp: point.timestamp,
+    };
 
-      if (sameSymbol && exchangeAllowed) {
-        subscriber.send(payload);
+    this.latestBySymbol.set(symbol, current);
+
+    for (const [client, filter] of this.clients.entries()) {
+      if (client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      if (filter.symbol !== symbol) {
+        continue;
+      }
+
+      const alignedTimestamp = bucketTimestamp(point.timestamp, filter.range);
+      const snapshot = this.latestBySymbol.get(symbol);
+
+      if (!snapshot) {
+        continue;
+      }
+
+      for (const exchange of filter.exchanges) {
+        const latest = snapshot[exchange];
+
+        if (!latest) {
+          continue;
+        }
+
+        client.send(
+          JSON.stringify({
+            exchange,
+            symbol,
+            price: latest.price,
+            timestamp: alignedTimestamp,
+          }),
+        );
       }
     }
   }

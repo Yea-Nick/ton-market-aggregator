@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import {
   CartesianGrid,
   Legend,
@@ -10,12 +11,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { formatChartTime } from '@/lib/chart';
-import { ChartRow, Exchange } from '@/lib/types';
+import { formatAxisTime, formatTooltipTime } from '@/lib/chart';
+import { ChartRow, Exchange, TimeRange } from '@/lib/types';
 
 interface PriceChartProps {
   rows: ChartRow[];
   exchanges: Exchange[];
+  range: TimeRange;
 }
 
 const EXCHANGE_COLORS: Record<Exchange, string> = {
@@ -32,26 +34,40 @@ const EXCHANGE_LABELS: Record<Exchange, string> = {
   dedust: 'DeDust',
 };
 
-export function PriceChart({ rows, exchanges }: PriceChartProps) {
+export function PriceChart({ rows, exchanges, range }: PriceChartProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
     <div className="chart-shell">
       <ResponsiveContainer width="100%" height={420}>
         <LineChart data={rows}>
-          <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
+          <CartesianGrid stroke="#24262b" strokeDasharray="3 3" />
           <XAxis
             dataKey="timestamp"
-            tickFormatter={formatChartTime}
+            tickFormatter={(value: string) =>
+              mounted ? formatAxisTime(value, range) : ''
+            }
             minTickGap={40}
-            stroke="#94a3b8"
+            stroke="#7f848e"
+            tickLine={false}
+            axisLine={{ stroke: '#2a2a2e' }}
           />
           <YAxis
-            domain={["auto", "auto"]}
+            domain={['auto', 'auto']}
             tickFormatter={(value: number) => value.toFixed(2)}
-            stroke="#94a3b8"
+            stroke="#7f848e"
             width={72}
+            tickLine={false}
+            axisLine={{ stroke: '#2a2a2e' }}
           />
           <Tooltip
-            labelFormatter={(value: string) => formatChartTime(value)}
+            labelFormatter={(value: string) =>
+              mounted ? formatTooltipTime(value) : ''
+            }
             formatter={(value, name) => {
               const formattedValue =
                 typeof value === 'number'
@@ -63,10 +79,13 @@ export function PriceChart({ rows, exchanges }: PriceChartProps) {
               return [formattedValue, EXCHANGE_LABELS[String(name) as Exchange] ?? String(name)];
             }}
             contentStyle={{
-              background: '#020617',
-              border: '1px solid #1e293b',
-              borderRadius: 12,
+              background: '#15161a',
+              border: '1px solid #2a2a2e',
+              borderRadius: 0,
+              color: '#e6e6e6',
             }}
+            itemStyle={{ color: '#e6e6e6' }}
+            labelStyle={{ color: '#9aa0aa' }}
           />
           <Legend />
 

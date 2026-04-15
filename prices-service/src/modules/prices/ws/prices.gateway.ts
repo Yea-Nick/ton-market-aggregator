@@ -1,76 +1,91 @@
-import { Logger } from '@nestjs/common';
 import {
+  ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import { randomUUID } from 'crypto';
-import { IncomingMessage } from 'http';
-import WebSocket from 'ws';
-import { AppConfigService } from '../../../common/config/app-config.service';
+import { Logger } from '@nestjs/common';
+import { Server, WebSocket } from 'ws';
+import {
+  SUPPORTED_EXCHANGES,
+  SUPPORTED_RANGES,
+  SupportedExchange,
+  SupportedRange,
+} from '../../../common/constants/prices.constants';
 import { PriceStreamService } from '../services/price-stream.service';
 
-@WebSocketGateway({ path: '/ws/prices' })
+@WebSocketGateway({
+  path: '/ws/prices',
+})
 export class PricesGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer()
+  server!: Server;
+
   private readonly logger = new Logger(PricesGateway.name);
-  private readonly heartbeatTimers = new Map<string, NodeJS.Timeout>();
-  private readonly socketIds = new WeakMap<WebSocket, string>();
 
-  constructor(
-    private readonly streamService: PriceStreamService,
-    private readonly config: AppConfigService,
-  ) { }
+  constructor(private readonly priceStreamService: PriceStreamService) { }
 
-  handleConnection(client: WebSocket, request: IncomingMessage): void {
-    const id = randomUUID();
-    const url = new URL(request.url ?? this.config.wsPath, 'ws://localhost');
-    const symbol = (url.searchParams.get('symbol') ?? 'TONUSDT').toUpperCase();
-    const exchanges = (url.searchParams.get('exchanges') ?? '')
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean);
+  handleConnection(client: WebSocket, request: Request & { url?: string; }): void {
+    const url = new URL(request.url ?? '', 'http://localhost');
 
-    this.socketIds.set(client, id);
-    this.streamService.register({
-      id,
-      filter: { symbol, exchanges },
-      send: (payload) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(payload);
-        }
-      },
-    });
+    const symbol = (url.searchParams.get('symbol') ?? '').trim().toUpperCase();
+    const exchanges = this.parseExchanges(url.searchParams.get('exchanges'));
+    const range = this.parseRange(url.searchParams.get('range'));
 
-    client.send(
-      JSON.stringify({
-        type: 'connection.ready',
-        data: { symbol, exchanges, connectedAt: new Date().toISOString() },
-      }),
-    );
-
-    const timer = setInterval(() => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.ping();
-      }
-    }, this.config.wsHeartbeatMs);
-
-    this.heartbeatTimers.set(id, timer);
-    this.logger.log(`WS client connected: ${id}`);
-  }
-
-  handleDisconnect(client: WebSocket): void {
-    const id = this.socketIds.get(client);
-    if (!id) {
+    if (!symbol || !exchanges.length) {
+      client.close();
       return;
     }
 
-    this.streamService.unregister(id);
-    const timer = this.heartbeatTimers.get(id);
-    if (timer) {
-      clearInterval(timer);
-      this.heartbeatTimers.delete(id);
+    this.priceStreamService.registerClient(client, {
+      symbol,
+      exchanges,
+      range,
+    });
+
+    this.logger.debug(
+      `WS client connected: symbol=${symbol}, range=${range}, exchanges=${exchanges.join(',')}`,
+    );
+  }
+
+  handleDisconnect(client: WebSocket): void {
+    this.priceStreamService.unregisterClient(client);
+  }
+
+  @SubscribeMessage('ping')
+  handlePing(
+    @ConnectedSocket() client: WebSocket,
+    @MessageBody() _payload: unknown,
+  ): void {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: 'pong' }));
+    }
+  }
+
+  private parseExchanges(value: string | null): SupportedExchange[] {
+    if (!value) {
+      return [...SUPPORTED_EXCHANGES];
     }
 
-    this.logger.log(`WS client disconnected: ${id}`);
+    return value
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(
+        (item): item is SupportedExchange =>
+          SUPPORTED_EXCHANGES.includes(item as SupportedExchange),
+      );
+  }
+
+  private parseRange(value: string | null): SupportedRange {
+    if (!value) {
+      return '1h';
+    }
+
+    return SUPPORTED_RANGES.includes(value as SupportedRange)
+      ? (value as SupportedRange)
+      : '1h';
   }
 }

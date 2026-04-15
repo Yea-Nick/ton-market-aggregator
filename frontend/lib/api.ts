@@ -1,10 +1,18 @@
 import { generateMockHistory } from './mock-data';
 import { HistoryResponse, LatestResponse, PricePoint, TimeRange, Exchange } from './types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost';
+export const API_PREFIX =
+  process.env.NEXT_PUBLIC_API_PREFIX ?? '/api/v1';
 
-function buildUrl(path: string, params: Record<string, string | undefined>) {
-  const url = new URL(path, API_BASE_URL);
+function getBaseOrigin(): string {
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return 'http://localhost';
+}
+
+function buildHttpUrl(path: string, params: Record<string, string | undefined>) {
+  const url = new URL(`${API_PREFIX}${path}`, getBaseOrigin());
 
   for (const [key, value] of Object.entries(params)) {
     if (value) {
@@ -15,8 +23,12 @@ function buildUrl(path: string, params: Record<string, string | undefined>) {
   return url.toString();
 }
 
-export async function fetchPriceHistory(symbol: string, range: TimeRange, exchanges: Exchange[]): Promise<PricePoint[]> {
-  const url = buildUrl('/api/v1/prices/history', {
+export async function fetchPriceHistory(
+  symbol: string,
+  range: TimeRange,
+  exchanges: Exchange[],
+): Promise<PricePoint[]> {
+  const url = buildHttpUrl('/prices/history', {
     symbol,
     range,
     exchanges: exchanges.join(','),
@@ -35,12 +47,14 @@ export async function fetchPriceHistory(symbol: string, range: TimeRange, exchan
     const data = (await response.json()) as HistoryResponse;
     return data.points;
   } catch {
-    return generateMockHistory(symbol, range).filter((point) => exchanges.includes(point.exchange));
+    return generateMockHistory(symbol, range).filter((point) =>
+      exchanges.includes(point.exchange),
+    );
   }
 }
 
 export async function fetchLatestPrices(symbol: string): Promise<LatestResponse['items']> {
-  const url = buildUrl('/api/v1/prices/latest', { symbol });
+  const url = buildHttpUrl('/prices/latest', { symbol });
 
   try {
     const response = await fetch(url, {
@@ -59,9 +73,22 @@ export async function fetchLatestPrices(symbol: string): Promise<LatestResponse[
   }
 }
 
-export function getWebSocketUrl(symbol: string, range: TimeRange, exchanges: Exchange[]): string {
-  const rawUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8080/ws/prices';
-  const url = new URL(rawUrl);
+export function getWebSocketUrl(
+  symbol: string,
+  range: TimeRange,
+  exchanges: Exchange[],
+): string {
+  const protocol =
+    typeof window !== 'undefined' && window.location.protocol === 'https:'
+      ? 'wss:'
+      : 'ws:';
+
+  const host =
+    typeof window !== 'undefined'
+      ? window.location.host
+      : 'localhost';
+
+  const url = new URL(`${protocol}//${host}/ws/prices`);
 
   url.searchParams.set('symbol', symbol);
   url.searchParams.set('range', range);

@@ -48,6 +48,7 @@ export function createKafkaProducer(params: ProducerParams): KafkaProducer {
       await producer.send({
         topic,
         messages: [message],
+        acks: -1  //Explicitly all
       });
     },
   };

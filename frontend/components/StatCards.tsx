@@ -85,12 +85,7 @@ export function StatCards({
         <article className="stat-card">
           <div className="stat-label">Connection</div>
           <div className="stat-value">{connectionState}</div>
-          <div className="stat-meta">
-            <ClientDateTime
-              value={lastUpdateAt}
-              fallback="Waiting for updates"
-            />
-          </div>
+          <div className="stat-meta"></div>
         </article>
 
         <article className="stat-card">
@@ -112,7 +107,7 @@ export function StatCards({
               <div className="stat-value">
                 {price !== null ? price.toFixed(4) : '—'}
               </div>
-              <div className="stat-meta">{exchange}</div>
+              <div className="stat-meta"></div>
             </article>
           );
         })}

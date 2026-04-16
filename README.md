@@ -6,6 +6,14 @@ This project focuses on building a **reliable event-driven pipeline** with stron
 
 ---
 
+## 🌐 Live Demo
+
+https://tonspread.tech
+
+> Real-time TON price aggregation with WebSocket streaming
+
+---
+
 ## 🚀 Overview
 
 The system aggregates price data from:
@@ -39,6 +47,7 @@ WebSocket / REST API
 - **Kafka** — event streaming backbone  
 - **PostgreSQL** — storage  
 - **Docker** — local orchestration  
+- **Nginx** — reverse proxy
 
 ---
 

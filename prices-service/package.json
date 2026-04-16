@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "TON prices service with Kafka consumer inbox pattern, PostgreSQL, REST and raw WebSocket streaming",
-  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",

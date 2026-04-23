@@ -1,67 +1,71 @@
-import type pino from 'pino';
-import { http } from '../utils/http';
-import { nowIso } from '../utils/time';
+import { env } from '../config/env';
 import type { ExchangeAdapter, FetchedPrice } from '../core/types';
+import { http } from '../utils/http';
 
-interface BitgetTickerResponse {
+interface BitgetTickerItem {
+  symbol?: string;
+  lastPr?: string;
+  ts?: string;
+}
+
+interface BitgetTickersResponse {
   code: string;
   msg: string;
   requestTime?: number;
-  data?: Array<{
-    symbol: string;
-    lastPr: string;
-    ts?: string;
-  }>;
+  data?: BitgetTickerItem[];
 }
 
 export class BitgetAdapter implements ExchangeAdapter {
   readonly name = 'bitget' as const;
-  private readonly logger: pino.Logger;
-  private readonly baseUrl = 'https://api.bitget.com';
-
-  constructor(logger: pino.Logger) {
-    this.logger = logger.child({ exchange: this.name });
-  }
 
   async fetchPrice(symbol: string): Promise<FetchedPrice> {
-    const endpoint = `/api/v2/spot/market/tickers?symbol=${encodeURIComponent(symbol)}`;
-    const response = await http.get<BitgetTickerResponse>(`${this.baseUrl}${endpoint}`);
-    const payload = response.data;
+    const payload = await http.getJson<BitgetTickersResponse>({
+      baseURL: env.exchanges.bitget.baseUrl,
+      url: '/api/v2/spot/market/tickers',
+      params: {
+        symbol,
+      },
+      headers: {
+        Accept: 'application/json',
+      },
+    });
 
     if (payload.code !== '00000') {
-      this.logger.warn({ response: payload }, 'Bitget returned error');
-      throw new Error(`Bitget API error: ${payload.msg || payload.code}`);
+      throw new Error(
+        `Bitget returned non-success code: ${payload.code}, msg: ${payload.msg}`,
+      );
     }
 
     const item = payload.data?.[0];
 
     if (!item) {
-      this.logger.warn({ response: payload }, 'Empty Bitget ticker list');
-      throw new Error('Bitget ticker not found');
+      throw new Error('Bitget response does not contain ticker item');
     }
 
-    if (!item.lastPr || Number.isNaN(Number(item.lastPr))) {
-      this.logger.warn({ response: payload }, 'Invalid Bitget lastPr');
-      throw new Error('Bitget returned invalid price');
+    if (!item.lastPr) {
+      throw new Error('Bitget response does not contain lastPr');
     }
 
-    const itemTs = item.ts ? Number(item.ts) : undefined;
-    const ts = Number.isFinite(itemTs) ? itemTs : payload.requestTime;
+    const fetchedAt = new Date().toISOString();
 
-    const sourceTimestamp =
-      typeof ts === 'number' && Number.isFinite(ts)
-        ? new Date(ts).toISOString()
-        : nowIso();
+    const ts =
+      item.ts && /^\d+$/.test(item.ts)
+        ? Number(item.ts)
+        : payload.requestTime;
+
+    const sourceTimestamp = ts
+      ? new Date(ts).toISOString()
+      : fetchedAt;
 
     return {
       exchange: this.name,
-      symbol: item.symbol,
+      symbol,
       price: item.lastPr,
       sourceTimestamp,
-      fetchedAt: nowIso(),
+      fetchedAt,
       source: {
-        name: this.name,
-        endpoint,
+        name: 'bitget',
+        endpoint: `${env.exchanges.bitget.baseUrl}/api/v2/spot/market/tickers`,
       },
     };
   }

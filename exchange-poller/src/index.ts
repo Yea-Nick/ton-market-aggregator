@@ -1,47 +1,151 @@
-import { loadConfig } from './config/env';
+import { env } from './config/env';
+import { Poller } from './core/poller';
+import type { ExchangeAdapter } from './core/types';
+import { BybitAdapter } from './adapters/bybit.adapter';
+import { BitgetAdapter } from './adapters/bitget.adapter';
+import { StonfiAdapter } from './adapters/stonfi.adapter';
+import { DedustAdapter } from './adapters/dedust.adapter';
 import { createLogger } from './utils/logger';
 import { createKafkaProducer } from './kafka/producer';
-import { createExchangeAdapters } from './adapters';
-import { Poller } from './core/poller';
 
-async function bootstrap(): Promise<void> {
-  const config = loadConfig();
-  const logger = createLogger(config.logLevel);
+const logger = createLogger({
+  level: env.logLevel,
+  nodeEnv: env.nodeEnv,
+});
 
-  const producer = createKafkaProducer({
-    clientId: config.kafka.clientId,
-    brokers: config.kafka.brokers,
-    logger,
+function buildAdapters(): ExchangeAdapter[] {
+  const adapters: ExchangeAdapter[] = [];
+
+  for (const exchange of env.enabledExchanges) {
+    switch (exchange) {
+      case 'bybit':
+        adapters.push(new BybitAdapter());
+        break;
+      case 'bitget':
+        adapters.push(new BitgetAdapter());
+        break;
+      case 'stonfi':
+        adapters.push(new StonfiAdapter());
+        break;
+      case 'dedust':
+        adapters.push(new DedustAdapter());
+        break;
+      default: {
+        const neverExchange: never = exchange;
+        throw new Error(`Unsupported exchange: ${neverExchange}`);
+      }
+    }
+  }
+
+  return adapters;
+}
+
+function timeoutPromise(ms: number, label: string): Promise<never> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    timer.unref?.();
   });
+}
 
-  await producer.connect();
+async function main(): Promise<void> {
+  logger.info(
+    {
+      symbol: env.symbol,
+      pollIntervalMs: env.pollIntervalMs,
+      enabledExchanges: env.enabledExchanges,
+      kafkaBrokers: env.kafka.brokers,
+      kafkaTopic: env.kafka.topic,
+      kafkaHealthTopic: env.kafka.healthTopic,
+      resilience: env.resilience,
+    },
+    'Bootstrapping exchange poller',
+  );
 
-  const adapters = createExchangeAdapters(config, logger);
+  const kafkaPublisher = createKafkaProducer();
+  await kafkaPublisher.connect();
+
+  logger.info('Kafka producer connected');
+
+  const adapters = buildAdapters();
+
+  if (adapters.length === 0) {
+    throw new Error('No exchange adapters enabled');
+  }
+
+  logger.info(
+    {
+      adapters: adapters.map((adapter) => adapter.name),
+    },
+    'Exchange adapters initialized',
+  );
 
   const poller = new Poller({
-    symbol: config.symbol,
-    topic: config.kafka.topic,
-    pollIntervalMs: config.pollIntervalMs,
     adapters,
-    producer,
+    publisher: kafkaPublisher,
+    symbol: env.symbol,
+    pollIntervalMs: env.pollIntervalMs,
     logger,
-    kafkaClientId: config.kafka.clientId
+    resilienceConfig: env.resilience,
   });
 
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'Shutting down exchange-poller');
-    await poller.stop();
-    await producer.disconnect();
+  let shuttingDown = false;
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) {
+      logger.warn({ signal }, 'Shutdown already in progress');
+      return;
+    }
+
+    shuttingDown = true;
+    logger.warn({ signal }, 'Shutdown signal received');
+
+    try {
+      await Promise.race([
+        poller.stop(),
+        timeoutPromise(5_000, 'Poller stop'),
+      ]);
+      logger.info('Poller stopped');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to stop poller cleanly');
+    }
+
+    try {
+      await Promise.race([
+        kafkaPublisher.disconnect(),
+        timeoutPromise(5_000, 'Kafka disconnect'),
+      ]);
+      logger.info('Kafka producer disconnected');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to disconnect Kafka producer cleanly');
+    }
+
     process.exit(0);
   };
 
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+
+  process.once('uncaughtException', (error) => {
+    logger.fatal({ err: error }, 'Uncaught exception');
+    void shutdown('uncaughtException');
+  });
+
+  process.once('unhandledRejection', (reason) => {
+    logger.fatal({ reason }, 'Unhandled rejection');
+    void shutdown('unhandledRejection');
+  });
 
   await poller.start();
 }
 
-bootstrap().catch((error) => {
-  console.error('Failed to start exchange-poller', error);
+void main().catch((error) => {
+  logger.fatal({ err: error }, 'Application failed to start');
   process.exit(1);
 });

@@ -1,17 +1,26 @@
 import pino from 'pino';
 
-export function createLogger(level: string) {
+interface CreateLoggerParams {
+  level: pino.LevelWithSilent;
+  nodeEnv: string;
+}
+
+export function createLogger(params: CreateLoggerParams): pino.Logger {
+  const isDevelopment = params.nodeEnv === 'development';
+
   return pino({
-    level,
-    transport:
-      process.env.NODE_ENV !== 'production'
-        ? {
-            target: 'pino-pretty',
-            options: {
-              colorize: true,
-              translateTime: 'SYS:standard',
-            },
-          }
-        : undefined,
+    level: params.level,
+    base: undefined,
+    timestamp: pino.stdTimeFunctions.isoTime,
+    transport: isDevelopment
+      ? {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'SYS:standard',
+          ignore: 'pid,hostname',
+        },
+      }
+      : undefined,
   });
 }

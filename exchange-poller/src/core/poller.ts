@@ -1,122 +1,236 @@
-import { v4 as uuidv4 } from 'uuid';
+import { buildDeterministicEventId } from './event-id';
 import type pino from 'pino';
-import type { ExchangeAdapter, PriceEvent } from './types';
-import type { KafkaProducer } from '../kafka/producer';
+import type {
+  ExchangeAdapter,
+  HealthEvent,
+  PriceEvent,
+  ResilienceConfig,
+} from './types';
+import { ResilientAdapter } from './resilience';
+import type { KafkaEventPublisher } from '../kafka/producer';
 
 interface PollerParams {
-  symbol: string;
-  topic: string;
-  pollIntervalMs: number;
   adapters: ExchangeAdapter[];
-  producer: KafkaProducer;
+  publisher: KafkaEventPublisher;
+  symbol: string;
+  pollIntervalMs: number;
   logger: pino.Logger;
-  kafkaClientId: string;
+  resilienceConfig: ResilienceConfig;
 }
 
 export class Poller {
+  private readonly resilientAdapters: ResilientAdapter[];
+  private readonly publisher: KafkaEventPublisher;
   private readonly symbol: string;
-  private readonly topic: string;
   private readonly pollIntervalMs: number;
-  private readonly adapters: ExchangeAdapter[];
-  private readonly producer: KafkaProducer;
   private readonly logger: pino.Logger;
-  private readonly kafkaClientId: string;
-  private timer: NodeJS.Timeout | null = null;
-  private stopped = false;
+
+  private intervalRef: NodeJS.Timeout | null = null;
   private running = false;
+  private stopping = false;
+  private currentTickPromise: Promise<void> | null = null;
 
   constructor(params: PollerParams) {
+    this.publisher = params.publisher;
     this.symbol = params.symbol;
-    this.topic = params.topic;
     this.pollIntervalMs = params.pollIntervalMs;
-    this.adapters = params.adapters;
-    this.producer = params.producer;
     this.logger = params.logger;
-    this.kafkaClientId = params.kafkaClientId;
+
+    this.resilientAdapters = params.adapters.map(
+      (adapter) =>
+        new ResilientAdapter({
+          adapter,
+          symbol: params.symbol,
+          logger: params.logger.child({ adapter: adapter.name }),
+          config: params.resilienceConfig,
+        }),
+    );
   }
 
   async start(): Promise<void> {
+    if (this.intervalRef) {
+      this.logger.warn('Poller is already started');
+      return;
+    }
+
+    this.stopping = false;
+
     this.logger.info(
       {
         symbol: this.symbol,
         pollIntervalMs: this.pollIntervalMs,
-        exchanges: this.adapters.map((adapter) => adapter.name),
+        adapters: this.resilientAdapters.map((adapter) => adapter.name),
       },
       'Starting poller',
     );
 
-    await this.tick();
-    this.timer = setInterval(() => {
-      void this.tick();
+    await this.runTick();
+
+    this.intervalRef = setInterval(() => {
+      void this.runTick();
     }, this.pollIntervalMs);
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    this.stopping = true;
+
+    if (this.intervalRef) {
+      clearInterval(this.intervalRef);
+      this.intervalRef = null;
     }
+
+    if (this.currentTickPromise) {
+      this.logger.info('Waiting for active polling cycle to finish');
+      await this.currentTickPromise;
+    }
+
+    this.logger.info('Poller stopped');
+  }
+
+  private runTick(): Promise<void> {
+    if (this.stopping) {
+      this.logger.debug('Poller is stopping; skipping tick');
+      return Promise.resolve();
+    }
+
+    if (this.running) {
+      this.logger.warn('Previous polling cycle is still running; skipping tick');
+      return this.currentTickPromise ?? Promise.resolve();
+    }
+
+    this.currentTickPromise = this.tick().finally(() => {
+      this.currentTickPromise = null;
+    });
+
+    return this.currentTickPromise;
   }
 
   private async tick(): Promise<void> {
-    if (this.stopped || this.running) {
-      return;
-    }
-
     this.running = true;
-    const startedAt = Date.now();
+    const tickStartedAt = Date.now();
 
     try {
-      const settled = await Promise.allSettled(
-        this.adapters.map(async (adapter) => {
-          const fetched = await adapter.fetchPrice(this.symbol);
+      this.logger.debug({ symbol: this.symbol }, 'Polling cycle started');
 
-          const event: PriceEvent = {
-            eventId: uuidv4(),
-            ...fetched,
-          };
+      const settledResults = await Promise.allSettled(
+        this.resilientAdapters.map((adapter) => adapter.execute()),
+      );
 
-          await this.producer.send({
-            topic: this.topic,
-            key: `${event.symbol}:${event.exchange}`,
-            value: JSON.stringify(event),
-            headers: {
-              eventId: event.eventId,
-              eventType: 'price.received',
-              schemaVersion: '1',
-              producer: this.kafkaClientId,
+      const priceEvents: PriceEvent[] = [];
+      const healthEvents: HealthEvent[] = [];
+
+      for (const settled of settledResults) {
+        if (settled.status === 'rejected') {
+          this.logger.error(
+            {
+              err: settled.reason,
             },
-          });
+            'Adapter crashed unexpectedly outside resilience layer',
+          );
+          continue;
+        }
+
+        const result = settled.value;
+
+        healthEvents.push(...result.healthEvents);
+
+        if (result.status === 'success') {
+          const event = this.toPriceEvent(result.fetched);
 
           this.logger.info(
             {
-              eventId: event.eventId,
               exchange: event.exchange,
               symbol: event.symbol,
               price: event.price,
               sourceTimestamp: event.sourceTimestamp,
+              eventId: event.eventId,
+              healthEventsCount: result.healthEvents.length,
             },
-            'Published price event',
+            'Adapter result accepted for Kafka',
           );
-        }),
-      );
 
-      for (const result of settled) {
-        if (result.status === 'rejected') {
-          this.logger.error({ err: result.reason }, 'Exchange polling failed');
+          priceEvents.push(event);
+          continue;
         }
+
+        if (result.status === 'suppressed') {
+          this.logger.info(
+            {
+              reason: result.reason,
+              attempts: result.attempts,
+            },
+            'Adapter result suppressed before Kafka',
+          );
+          continue;
+        }
+
+        this.logger.warn(
+          {
+            errorKind: result.error.kind,
+            statusCode: result.error.statusCode,
+            attempts: result.attempts,
+            reason: result.error.message,
+          },
+          'Adapter execution failed',
+        );
       }
+
+      if (this.stopping) {
+        this.logger.info(
+          {
+            skippedPriceEvents: priceEvents.length,
+            skippedHealthEvents: healthEvents.length,
+          },
+          'Poller is stopping; skipping Kafka publish for completed tick',
+        );
+        return;
+      }
+
+      await this.publisher.publishPriceEvents(priceEvents);
+      await this.publisher.publishHealthEvents(healthEvents);
 
       this.logger.info(
         {
-          durationMs: Date.now() - startedAt,
-          exchangesCount: this.adapters.length,
+          producedPriceEvents: priceEvents.length,
+          producedHealthEvents: healthEvents.length,
+          durationMs: Date.now() - tickStartedAt,
         },
-        'Polling cycle completed',
+        'Polling cycle finished',
+      );
+    } catch (error) {
+      this.logger.error(
+        {
+          err: error,
+          durationMs: Date.now() - tickStartedAt,
+        },
+        'Polling cycle crashed unexpectedly',
       );
     } finally {
       this.running = false;
     }
+  }
+
+  private toPriceEvent(fetched: {
+    exchange: string;
+    symbol: string;
+    price: string;
+    sourceTimestamp: string;
+    fetchedAt: string;
+    source: { name: string; endpoint: string; };
+  }): PriceEvent {
+    return {
+      eventId: buildDeterministicEventId({
+        exchange: fetched.exchange as PriceEvent['exchange'],
+        symbol: fetched.symbol,
+        sourceTimestamp: fetched.sourceTimestamp,
+        price: fetched.price,
+      }),
+      exchange: fetched.exchange as PriceEvent['exchange'],
+      symbol: fetched.symbol,
+      price: fetched.price,
+      sourceTimestamp: fetched.sourceTimestamp,
+      fetchedAt: fetched.fetchedAt,
+      source: fetched.source,
+    };
   }
 }

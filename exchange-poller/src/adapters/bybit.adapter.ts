@@ -1,61 +1,66 @@
-import type pino from 'pino';
-import { http } from '../utils/http';
-import { nowIso } from '../utils/time';
+import { env } from '../config/env';
 import type { ExchangeAdapter, FetchedPrice } from '../core/types';
+import { http } from '../utils/http';
 
-interface BybitTickerResponse {
+interface BybitTickersResponse {
   retCode: number;
   retMsg: string;
+  time?: number;
   result?: {
-    category: string;
-    list: Array<{
-      symbol: string;
-      lastPrice: string;
+    category?: string;
+    list?: Array<{
+      symbol?: string;
+      lastPrice?: string;
     }>;
   };
-  time?: number;
 }
 
 export class BybitAdapter implements ExchangeAdapter {
   readonly name = 'bybit' as const;
-  private readonly logger: pino.Logger;
-  private readonly baseUrl = 'https://api.bybit.com';
-
-  constructor(logger: pino.Logger) {
-    this.logger = logger.child({ exchange: this.name });
-  }
 
   async fetchPrice(symbol: string): Promise<FetchedPrice> {
-    const endpoint = `/v5/market/tickers?category=spot&symbol=${encodeURIComponent(symbol)}`;
-    const response = await http.get<BybitTickerResponse>(`${this.baseUrl}${endpoint}`);
-    const payload = response.data;
+    const payload = await http.getJson<BybitTickersResponse>({
+      baseURL: env.exchanges.bybit.baseUrl,
+      url: '/v5/market/tickers',
+      params: {
+        category: 'spot',
+        symbol,
+      },
+      headers: {
+        Accept: 'application/json',
+      },
+    });
 
     if (payload.retCode !== 0) {
-      this.logger.warn({ response: payload }, 'Bybit returned error');
-      throw new Error(`Bybit API error: ${payload.retMsg || payload.retCode}`);
+      throw new Error(
+        `Bybit returned non-zero retCode: ${payload.retCode}, retMsg: ${payload.retMsg}`,
+      );
     }
 
     const item = payload.result?.list?.[0];
 
     if (!item) {
-      this.logger.warn({ response: payload }, 'Empty Bybit ticker list');
-      throw new Error('Bybit ticker not found');
+      throw new Error('Bybit response does not contain ticker item');
     }
 
-    if (!item.lastPrice || Number.isNaN(Number(item.lastPrice))) {
-      this.logger.warn({ response: payload }, 'Invalid Bybit lastPrice');
-      throw new Error('Bybit returned invalid price');
+    if (!item.lastPrice) {
+      throw new Error('Bybit response does not contain lastPrice');
     }
+
+    const fetchedAt = new Date().toISOString();
+    const sourceTimestamp = payload.time
+      ? new Date(payload.time).toISOString()
+      : fetchedAt;
 
     return {
       exchange: this.name,
-      symbol: item.symbol,
+      symbol,
       price: item.lastPrice,
-      sourceTimestamp: payload.time ? new Date(payload.time).toISOString() : nowIso(),
-      fetchedAt: nowIso(),
+      sourceTimestamp,
+      fetchedAt,
       source: {
-        name: this.name,
-        endpoint,
+        name: 'bybit',
+        endpoint: `${env.exchanges.bybit.baseUrl}/v5/market/tickers`,
       },
     };
   }

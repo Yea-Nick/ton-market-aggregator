@@ -1,6 +1,5 @@
-import type pino from 'pino';
+import { env } from '../config/env';
 import { http } from '../utils/http';
-import { nowIso } from '../utils/time';
 import type { ExchangeAdapter, FetchedPrice } from '../core/types';
 import {
   STONFI_SUPPORTED_PAIRS,
@@ -8,6 +7,10 @@ import {
   isStonfiTonAddress,
 } from '../utils/dex/stonfi-assets';
 import { priceFromReserves, roundPriceString } from '../utils/dex/math';
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
 
 interface StonfiPool {
   address?: string;
@@ -24,12 +27,7 @@ interface StonfiPoolsByMarketResponse {
 
 export class StonfiAdapter implements ExchangeAdapter {
   readonly name = 'stonfi' as const;
-  private readonly logger: pino.Logger;
-  private readonly baseUrl = 'https://api.ston.fi';
-
-  constructor(logger: pino.Logger) {
-    this.logger = logger.child({ exchange: this.name });
-  }
+  private readonly baseUrl = env.exchanges.stonfi.baseUrl;
 
   async fetchPrice(symbol: string): Promise<FetchedPrice> {
     const normalizedSymbol = symbol.toUpperCase();
@@ -39,13 +37,18 @@ export class StonfiAdapter implements ExchangeAdapter {
       throw new Error(`StonfiAdapter does not support symbol: ${symbol}`);
     }
 
-    const endpoint = `/v1/pools/by_market/${encodeURIComponent(pair.token0)}/${encodeURIComponent(pair.token1)}`;
+    const endpoint =
+      `/v1/pools/by_market/${encodeURIComponent(pair.token0)}/${encodeURIComponent(pair.token1)}`;
 
-    const response = await http.get<StonfiPoolsByMarketResponse>(
-      `${this.baseUrl}${endpoint}`,
-    );
+    const response = await http.getJson<StonfiPoolsByMarketResponse>({
+      baseURL: this.baseUrl,
+      url: endpoint,
+      headers: {
+        Accept: 'application/json',
+      },
+    });
 
-    const pool = response.data?.pool_list?.[0];
+    const pool = response.pool_list?.[0];
 
     if (
       !pool ||
@@ -54,15 +57,6 @@ export class StonfiAdapter implements ExchangeAdapter {
       !pool.token0_address ||
       !pool.token1_address
     ) {
-      this.logger.warn(
-        {
-          symbol: pair.symbol,
-          token0: pair.token0,
-          token1: pair.token1,
-          response: response.data,
-        },
-        'STON.fi pool response is incomplete',
-      );
       throw new Error('STON.fi pool response is incomplete');
     }
 
@@ -70,15 +64,6 @@ export class StonfiAdapter implements ExchangeAdapter {
     const reserve1 = BigInt(pool.reserve1);
 
     if (reserve0 <= 0n || reserve1 <= 0n) {
-      this.logger.warn(
-        {
-          symbol: pair.symbol,
-          reserve0: pool.reserve0,
-          reserve1: pool.reserve1,
-          poolAddress: pool.address,
-        },
-        'STON.fi pool has empty reserves',
-      );
       throw new Error('STON.fi pool has empty reserves');
     }
 
@@ -87,17 +72,6 @@ export class StonfiAdapter implements ExchangeAdapter {
       (pool.token1_address === STONFI_USDT && isStonfiTonAddress(pool.token0_address));
 
     if (!isValidPool) {
-      this.logger.warn(
-        {
-          symbol: pair.symbol,
-          expectedToken0: pair.token0,
-          expectedToken1: pair.token1,
-          actualToken0: pool.token0_address,
-          actualToken1: pool.token1_address,
-          poolAddress: pool.address,
-        },
-        'STON.fi pool token mismatch',
-      );
       throw new Error('STON.fi pool token mismatch');
     }
 
@@ -121,7 +95,7 @@ export class StonfiAdapter implements ExchangeAdapter {
       fetchedAt,
       source: {
         name: 'stonfi',
-        endpoint,
+        endpoint: `${this.baseUrl}${endpoint}`,
       },
     };
   }

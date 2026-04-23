@@ -1,55 +1,101 @@
-import { Kafka, logLevel, type Producer, type Message } from 'kafkajs';
-import type pino from 'pino';
+import { Kafka, Producer, CompressionTypes } from 'kafkajs';
+import { env } from '../config/env';
+import type { HealthEvent, PriceEvent } from '../core/types';
 
-interface ProducerParams {
+export interface KafkaEventPublisher {
+  connect(): Promise<void>;
+  publishPriceEvents(events: PriceEvent[]): Promise<void>;
+  publishHealthEvents(events: HealthEvent[]): Promise<void>;
+  disconnect(): Promise<void>;
+}
+
+interface KafkaProducerServiceParams {
   clientId: string;
   brokers: string[];
-  logger: pino.Logger;
+  priceTopic: string;
+  healthTopic: string;
 }
 
-export interface KafkaProducer {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  send(params: {
-    topic: string;
-    key: string;
-    value: string;
-    headers?: Record<string, string>;
-  }): Promise<void>;
+class KafkaProducerService implements KafkaEventPublisher {
+  private readonly kafka: Kafka;
+  private readonly producer: Producer;
+  private readonly clientId: string;
+  private readonly priceTopic: string;
+  private readonly healthTopic: string;
+
+  constructor(params: KafkaProducerServiceParams) {
+    this.clientId = params.clientId;
+    this.priceTopic = params.priceTopic;
+    this.healthTopic = params.healthTopic;
+
+    this.kafka = new Kafka({
+      clientId: params.clientId,
+      brokers: params.brokers,
+    });
+
+    this.producer = this.kafka.producer({
+      allowAutoTopicCreation: false,
+      transactionTimeout: 30 * 1000,
+    });
+  }
+
+  async connect(): Promise<void> {
+    await this.producer.connect();
+  }
+
+  async publishPriceEvents(events: PriceEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+
+    await this.producer.send({
+      topic: this.priceTopic,
+      compression: CompressionTypes.GZIP,
+      messages: events.map((event) => ({
+        key: `${event.symbol}:${event.exchange}`,
+        value: JSON.stringify(event),
+        headers: {
+          eventId: event.eventId,
+          eventType: 'price.received',
+          schemaVersion: '1',
+          producer: this.clientId,
+        },
+      })),
+    });
+  }
+
+  async publishHealthEvents(events: HealthEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+
+    await this.producer.send({
+      topic: this.healthTopic,
+      compression: CompressionTypes.GZIP,
+      messages: events.map((event) => ({
+        key: `${event.symbol}:${event.exchange}:${event.type}`,
+        value: JSON.stringify(event),
+        headers: {
+          eventId: event.eventId,
+          eventType: event.type,
+          schemaVersion: '1',
+          producer: this.clientId,
+          severity: event.severity,
+        },
+      })),
+    });
+  }
+
+  async disconnect(): Promise<void> {
+    await this.producer.disconnect();
+  }
 }
 
-export function createKafkaProducer(params: ProducerParams): KafkaProducer {
-  const kafka = new Kafka({
-    clientId: params.clientId,
-    brokers: params.brokers,
-    logLevel: logLevel.NOTHING,
+export function createKafkaProducer(): KafkaEventPublisher {
+  return new KafkaProducerService({
+    clientId: env.kafka.clientId,
+    brokers: env.kafka.brokers,
+    priceTopic: env.kafka.topic,
+    healthTopic: env.kafka.healthTopic,
   });
-
-  const producer: Producer = kafka.producer();
-
-  return {
-    async connect() {
-      await producer.connect();
-      params.logger.info({ brokers: params.brokers, clientId: params.clientId }, 'Kafka producer connected');
-    },
-
-    async disconnect() {
-      await producer.disconnect();
-      params.logger.info('Kafka producer disconnected');
-    },
-
-    async send({ topic, key, value, headers }) {
-      const message: Message = {
-        key,
-        value,
-        headers,
-      };
-
-      await producer.send({
-        topic,
-        messages: [message],
-        acks: -1  //Explicitly all
-      });
-    },
-  };
 }

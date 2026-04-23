@@ -7,6 +7,7 @@ export interface PricePoint {
   symbol: string;
   price: number;
   timestamp: string;
+  sourceTimestamp?: string;
 }
 
 export interface HistoryResponse {

@@ -1,5 +1,5 @@
 create table if not exists consumer_inbox (
-    event_id uuid primary key,
+    event_id text primary key,
     topic varchar(255) not null,
     partition int not null,
     partition_offset bigint not null,
@@ -10,7 +10,7 @@ create table if not exists consumer_inbox (
 
 create table if not exists price_ticks (
     id bigserial primary key,
-    event_id uuid not null unique,
+    event_id text not null unique,
     exchange varchar(50) not null,
     symbol varchar(20) not null,
     price numeric(20,10) not null,

@@ -13,7 +13,7 @@ export class PriceTickEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
 
-  @Column({ type: 'uuid', unique: true, name: 'event_id' })
+  @Column({ type: 'text', unique: true, name: 'event_id' })
   eventId!: string;
 
   @Column({ type: 'varchar', length: 50 })
@@ -22,10 +22,12 @@ export class PriceTickEntity {
   @Column({ type: 'varchar', length: 20 })
   symbol!: string;
 
-  @Column({ type: 'numeric', precision: 20, scale: 10, transformer: {
-    to: (value: number | string) => value,
-    from: (value: string) => Number(value),
-  } })
+  @Column({
+    type: 'numeric', precision: 20, scale: 10, transformer: {
+      to: (value: number | string) => value,
+      from: (value: string) => Number(value),
+    }
+  })
   price!: number;
 
   @Column({ type: 'timestamptz', name: 'source_timestamp' })

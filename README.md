@@ -119,7 +119,5 @@ make prod
 ---
 
 ## 📈 Possible Improvements
-- Dead-letter queue (DLQ) for failed events
 - Observability (metrics, tracing)
-- Retry/backoff for unstable exchange APIs
 - Horizontal scaling for consumers

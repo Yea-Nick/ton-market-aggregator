@@ -7,7 +7,7 @@ import {
 
 @Entity({ name: 'consumer_inbox' })
 export class ConsumerInboxEntity {
-  @PrimaryColumn({ type: 'uuid', name: 'event_id' })
+  @PrimaryColumn({ type: 'text', name: 'event_id' })
   eventId!: string;
 
   @Column({ type: 'varchar', length: 255 })

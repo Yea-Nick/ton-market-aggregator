@@ -8,10 +8,66 @@ export interface ChartRow {
   dedust: number | null;
 }
 
-export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[] {
-  const rowsMap = new Map<string, ChartRow>();
+const CHART_STALE_AFTER_MS: Record<Exchange, number> = {
+  bybit: 10_000,
+  bitget: 10_000,
+  stonfi: 15_000,
+  dedust: 15_000,
+};
 
-  for (const point of points) {
+type ExchangeState = {
+  price: number;
+  freshnessTimestampMs: number;
+};
+
+function emptyRow(timestamp: string): ChartRow {
+  return {
+    timestamp,
+    bybit: null,
+    bitget: null,
+    stonfi: null,
+    dedust: null,
+  };
+}
+
+function toDate(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toMs(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function getFreshnessTimestampMs(point: PricePoint): number | null {
+  return toMs(point.sourceTimestamp) ?? toMs(point.timestamp);
+}
+
+export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const validPoints = [...points]
+    .filter((point) => toMs(point.timestamp) !== null)
+    .sort(
+      (left, right) =>
+        new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+    );
+
+  if (validPoints.length === 0) {
+    return [];
+  }
+
+  const rowsMap = new Map<string, ChartRow>();
+  const timestamps: string[] = [];
+
+  for (const point of validPoints) {
     const existing = rowsMap.get(point.timestamp);
 
     if (existing) {
@@ -26,45 +82,101 @@ export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[]
       stonfi: point.exchange === 'stonfi' ? point.price : null,
       dedust: point.exchange === 'dedust' ? point.price : null,
     });
+
+    timestamps.push(point.timestamp);
   }
 
-  return Array.from(rowsMap.values()).sort(
-    (left, right) =>
-      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  timestamps.sort(
+    (left, right) => new Date(left).getTime() - new Date(right).getTime(),
   );
+
+  const lastSeen: Partial<Record<Exchange, ExchangeState>> = {};
+  const rows: ChartRow[] = [];
+
+  for (const timestamp of timestamps) {
+    const rowTimestampMs = toMs(timestamp);
+    if (rowTimestampMs === null) {
+      continue;
+    }
+
+    const row = rowsMap.get(timestamp);
+    if (!row) {
+      continue;
+    }
+
+    const nextRow = emptyRow(timestamp);
+
+    for (const exchange of EXCHANGES) {
+      const explicitValue = row[exchange];
+
+      if (typeof explicitValue === 'number') {
+        const matchingPoint = validPoints
+          .filter(
+            (point) =>
+              point.timestamp === timestamp && point.exchange === exchange,
+          )
+          .sort(
+            (left, right) =>
+              (getFreshnessTimestampMs(right) ?? -Infinity) -
+              (getFreshnessTimestampMs(left) ?? -Infinity),
+          )[0];
+
+        const freshnessTimestampMs =
+          (matchingPoint && getFreshnessTimestampMs(matchingPoint)) ??
+          rowTimestampMs;
+
+        lastSeen[exchange] = {
+          price: explicitValue,
+          freshnessTimestampMs,
+        };
+
+        nextRow[exchange] = explicitValue;
+        continue;
+      }
+
+      const previous = lastSeen[exchange];
+      if (!previous) {
+        nextRow[exchange] = null;
+        continue;
+      }
+
+      const ageMs = rowTimestampMs - previous.freshnessTimestampMs;
+
+      nextRow[exchange] =
+        ageMs <= CHART_STALE_AFTER_MS[exchange] ? previous.price : null;
+    }
+
+    rows.push(nextRow);
+  }
+
+  return rows;
 }
 
-export function upsertLivePoint(
-  rows: ChartRow[],
-  point: PricePoint,
-  _range: TimeRange,
-): ChartRow[] {
-  const nextRows = [...rows];
-  const existingIndex = nextRows.findIndex((row) => row.timestamp === point.timestamp);
+export function upsertLivePoint(points: PricePoint[], point: PricePoint): PricePoint[] {
+  const nextPoints = [...points];
+  const existingIndex = nextPoints.findIndex(
+    (item) =>
+      item.timestamp === point.timestamp && item.exchange === point.exchange,
+  );
 
   if (existingIndex >= 0) {
-    nextRows[existingIndex] = {
-      ...nextRows[existingIndex],
-      [point.exchange]: point.price,
-    };
+    const existing = nextPoints[existingIndex];
+    const existingFreshnessMs = getFreshnessTimestampMs(existing) ?? -Infinity;
+    const incomingFreshnessMs = getFreshnessTimestampMs(point) ?? -Infinity;
 
-    return nextRows;
+    if (incomingFreshnessMs >= existingFreshnessMs) {
+      nextPoints[existingIndex] = point;
+    }
+  } else {
+    nextPoints.push(point);
   }
 
-  nextRows.push({
-    timestamp: point.timestamp,
-    bybit: point.exchange === 'bybit' ? point.price : null,
-    bitget: point.exchange === 'bitget' ? point.price : null,
-    stonfi: point.exchange === 'stonfi' ? point.price : null,
-    dedust: point.exchange === 'dedust' ? point.price : null,
-  });
-
-  nextRows.sort(
+  nextPoints.sort(
     (left, right) =>
       new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
   );
 
-  return nextRows;
+  return nextPoints;
 }
 
 export function getLastValue(rows: ChartRow[], exchange: Exchange): number | null {
@@ -91,11 +203,6 @@ export function formatExchangeName(exchange: Exchange): string {
     default:
       return exchange;
   }
-}
-
-function toDate(value: string): Date | null {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export function formatAxisTime(timestamp: string, range: TimeRange): string {

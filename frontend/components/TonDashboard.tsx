@@ -21,6 +21,22 @@ interface TonDashboardProps {
   initialPoints: PricePoint[];
 }
 
+function formatAge(ageMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ageMs / 1000));
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s ago`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m ago`;
+  }
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  return `${totalHours}h ago`;
+}
+
 export function TonDashboard({
   symbol,
   initialRange,
@@ -73,18 +89,70 @@ export function TonDashboard({
     });
   };
 
-  const heroPrice = useMemo(() => {
-    const values = selectedExchanges
-      .map((exchange) => latestMap[exchange]?.price)
-      .filter((value): value is number => typeof value === 'number');
+  const liveValues = useMemo(() => {
+    return selectedExchanges
+      .map((exchange) => latestMap[exchange])
+      .filter(
+        (item): item is NonNullable<typeof item> =>
+          !!item && item.freshness === 'live',
+      );
+  }, [latestMap, selectedExchanges]);
 
-    if (!values.length) {
-      return null;
+  const staleValues = useMemo(() => {
+    return selectedExchanges
+      .map((exchange) => latestMap[exchange])
+      .filter(
+        (item): item is NonNullable<typeof item> =>
+          !!item && item.freshness === 'stale',
+      );
+  }, [latestMap, selectedExchanges]);
+
+  const hero = useMemo(() => {
+    const preferred = liveValues.length > 0 ? liveValues : staleValues;
+
+    if (!preferred.length) {
+      return {
+        price: null as number | null,
+        label: 'No recent data',
+      };
     }
 
-    const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-    return avg;
-  }, [latestMap, selectedExchanges]);
+    const avg =
+      preferred.reduce((sum, item) => sum + item.price, 0) / preferred.length;
+
+    if (liveValues.length > 0) {
+      return {
+        price: avg,
+        label: `Live from ${liveValues.length} source${liveValues.length > 1 ? 's' : ''}`,
+      };
+    }
+
+    const oldestAgeMs = Math.max(...preferred.map((item) => item.ageMs));
+    return {
+      price: avg,
+      label: `Stale • last update ${formatAge(oldestAgeMs)}`,
+    };
+  }, [liveValues, staleValues]);
+
+  const chartStatus = useMemo(() => {
+    if (isLoading) {
+      return 'Loading history...';
+    }
+
+    if (rows.length === 0) {
+      return `No ticks in selected ${range} window`;
+    }
+
+    if (liveValues.length > 0) {
+      return `Live chart • ${rows.length} bucket${rows.length > 1 ? 's' : ''}`;
+    }
+
+    if (staleValues.length > 0) {
+      return `No live sources • showing historical buckets only`;
+    }
+
+    return `No data in selected ${range} window`;
+  }, [isLoading, rows.length, range, liveValues.length, staleValues.length]);
 
   return (
     <main className="page-shell">
@@ -102,19 +170,18 @@ export function TonDashboard({
           </div>
 
           <div className="hero-price">
-            {heroPrice !== null ? heroPrice.toFixed(4) : '—'}
+            {hero.price !== null ? hero.price.toFixed(4) : '—'}
           </div>
 
-          <div className="hero-sub">
-            Aggregated live price across selected exchanges
-          </div>
+          <div className="hero-sub">{hero.label}</div>
         </div>
 
         <div className="hero-side">
           <div className="hero-badge">{symbol}</div>
-          <div className="hero-hint">
-            {isLoading ? 'Updating history...' : 'Live mode enabled'}
+          <div className="hero-badge">
+            {connectionState === 'connected' ? 'WS connected' : connectionState}
           </div>
+          <div className="hero-badge">{range}</div>
         </div>
       </section>
 
@@ -126,21 +193,27 @@ export function TonDashboard({
       />
 
       <StatCards
-        rows={rows}
         exchanges={selectedExchanges}
         connectionState={connectionState}
         lastUpdateAt={lastUpdateAt}
+        latestMap={latestMap}
       />
 
-      <section className="card chart-card">
-        <div className="section-title-row">
-          <div>
-            <div className="section-title">Chart</div>
-            <div className="section-subtitle">
-              Range: {range}. Active sources: {selectedExchanges.length}
-            </div>
-          </div>
+      <section className="card">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '12px',
+            marginBottom: '12px',
+            color: '#9aa0aa',
+            fontSize: '14px',
+          }}
+        >
+          <div>{chartStatus}</div>
+          <div>{isLoading ? 'Refreshing…' : 'History + live ticks'}</div>
         </div>
+
         <PriceChart rows={rows} exchanges={selectedExchanges} range={range} />
       </section>
     </main>

@@ -76,7 +76,10 @@ export function PriceChart({ rows, exchanges, range }: PriceChartProps) {
                     ? ''
                     : String(value);
 
-              return [formattedValue, EXCHANGE_LABELS[String(name) as Exchange] ?? String(name)];
+              return [
+                formattedValue,
+                EXCHANGE_LABELS[String(name) as Exchange] ?? String(name),
+              ];
             }}
             contentStyle={{
               background: '#15161a',
@@ -92,14 +95,14 @@ export function PriceChart({ rows, exchanges, range }: PriceChartProps) {
           {exchanges.map((exchange) => (
             <Line
               key={exchange}
-              type="monotone"
+              type="stepAfter"
               dataKey={exchange}
               name={exchange}
-              connectNulls
               dot={false}
               stroke={EXCHANGE_COLORS[exchange]}
               strokeWidth={2}
               isAnimationActive={false}
+              connectNulls={false}
             />
           ))}
         </LineChart>

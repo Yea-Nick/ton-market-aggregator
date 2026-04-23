@@ -24,6 +24,21 @@ interface BroadcastPoint {
   timestamp: string;
 }
 
+interface StreamPayload {
+  exchange: SupportedExchange;
+  symbol: string;
+  price: number;
+  timestamp: string;
+  sourceTimestamp: string;
+}
+
+const WS_STALE_AFTER_MS: Record<SupportedExchange, number> = {
+  bybit: 30_000,
+  bitget: 30_000,
+  stonfi: 60_000,
+  dedust: 60_000,
+};
+
 @Injectable()
 export class PriceStreamService {
   private readonly clients = new Map<WebSocket, SubscriptionFilter>();
@@ -68,6 +83,8 @@ export class PriceStreamService {
         continue;
       }
 
+      const nowMs = Date.now();
+
       for (const exchange of filter.exchanges) {
         const latest = snapshot[exchange];
 
@@ -75,14 +92,25 @@ export class PriceStreamService {
           continue;
         }
 
-        client.send(
-          JSON.stringify({
-            exchange,
-            symbol,
-            price: latest.price,
-            timestamp: alignedTimestamp,
-          }),
-        );
+        const sourceTimestampMs = new Date(latest.timestamp).getTime();
+        if (Number.isNaN(sourceTimestampMs)) {
+          continue;
+        }
+
+        const ageMs = Math.max(0, nowMs - sourceTimestampMs);
+        if (ageMs > WS_STALE_AFTER_MS[exchange]) {
+          continue;
+        }
+
+        const payload: StreamPayload = {
+          exchange,
+          symbol,
+          price: latest.price,
+          timestamp: alignedTimestamp,
+          sourceTimestamp: latest.timestamp,
+        };
+
+        client.send(JSON.stringify(payload));
       }
     }
   }

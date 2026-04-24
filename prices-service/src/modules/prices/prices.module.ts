@@ -8,6 +8,7 @@ import { PricesIngestService } from './services/prices-ingest.service';
 import { PricesQueryService } from './services/prices-query.service';
 import { PriceStreamService } from './services/price-stream.service';
 import { PricesGateway } from './ws/prices.gateway';
+import { PricesRetentionService } from './services/prices-retention.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ConsumerInboxEntity, PriceTickEntity])],
@@ -18,6 +19,7 @@ import { PricesGateway } from './ws/prices.gateway';
     KafkaConsumerService,
     PriceStreamService,
     PricesGateway,
+    PricesRetentionService,
   ],
 })
 export class PricesModule { }

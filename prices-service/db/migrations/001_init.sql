@@ -20,6 +20,6 @@ create table if not exists price_ticks (
 
 create index if not exists idx_price_ticks_symbol_exchange_ts
     on price_ticks(symbol, exchange, source_timestamp desc);
-
-create index if not exists idx_price_ticks_symbol_ts
-    on price_ticks(symbol, source_timestamp desc);
+    
+create index if not exists idx_consumer_inbox_received_at
+    on consumer_inbox(received_at);

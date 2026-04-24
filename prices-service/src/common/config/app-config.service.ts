@@ -115,4 +115,16 @@ export class AppConfigService {
   get wsHeartbeatMs(): number {
     return this.getNumber('WS_HEARTBEAT_MS', 30000);
   }
+
+  get priceTicksRetentionHours(): number {
+    return this.getNumber('PRICE_TICKS_RETENTION_HOURS', 25);
+  }
+
+  get consumerInboxRetentionHours(): number {
+    return this.getNumber('CONSUMER_INBOX_RETENTION_HOURS', 12);
+  }
+
+  get retentionRunIntervalMs(): number {
+    return this.getNumber('RETENTION_RUN_INTERVAL_MS', 900000);
+  }
 }

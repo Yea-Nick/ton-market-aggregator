@@ -8,7 +8,6 @@ import {
 
 @Entity({ name: 'price_ticks' })
 @Index('idx_price_ticks_symbol_exchange_ts', ['symbol', 'exchange', 'sourceTimestamp'])
-@Index('idx_price_ticks_symbol_ts', ['symbol', 'sourceTimestamp'])
 export class PriceTickEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;

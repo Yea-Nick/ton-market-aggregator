@@ -43,9 +43,9 @@ function getFreshnessTimestamp(point: Pick<PricePoint, 'timestamp' | 'sourceTime
   return point.sourceTimestamp ?? point.timestamp;
 }
 
-function normalizeIncomingPoint(payload: unknown): PricePoint | null {
+function normalizeIncomingPoints(payload: unknown): PricePoint[] {
   if (!payload || typeof payload !== 'object') {
-    return null;
+    return [];
   }
 
   const candidate =
@@ -54,56 +54,63 @@ function normalizeIncomingPoint(payload: unknown): PricePoint | null {
       : payload;
 
   if (!candidate || typeof candidate !== 'object') {
-    return null;
+    return [];
   }
 
-  const rawExchange =
-    'exchange' in candidate ? candidate.exchange : undefined;
-  const rawSymbol =
-    'symbol' in candidate ? candidate.symbol : undefined;
-  const rawPrice =
-    'price' in candidate ? candidate.price : undefined;
-  const rawTimestamp =
-    'timestamp' in candidate
-      ? candidate.timestamp
-      : undefined;
-  const rawSourceTimestamp =
-    'sourceTimestamp' in candidate
-      ? candidate.sourceTimestamp
-      : undefined;
+  const items =
+    'items' in candidate && Array.isArray(candidate.items)
+      ? candidate.items
+      : [candidate];
 
-  if (
-    typeof rawExchange !== 'string' ||
-    typeof rawSymbol !== 'string' ||
-    (typeof rawPrice !== 'number' && typeof rawPrice !== 'string') ||
-    typeof rawTimestamp !== 'string'
-  ) {
-    return null;
+  const result: PricePoint[] = [];
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+
+    const rawExchange = 'exchange' in item ? item.exchange : undefined;
+    const rawSymbol = 'symbol' in item ? item.symbol : undefined;
+    const rawPrice = 'price' in item ? item.price : undefined;
+    const rawTimestamp = 'timestamp' in item ? item.timestamp : undefined;
+    const rawSourceTimestamp =
+      'sourceTimestamp' in item ? item.sourceTimestamp : undefined;
+
+    if (
+      typeof rawExchange !== 'string' ||
+      typeof rawSymbol !== 'string' ||
+      (typeof rawPrice !== 'number' && typeof rawPrice !== 'string') ||
+      typeof rawTimestamp !== 'string'
+    ) {
+      continue;
+    }
+
+    const price = Number(rawPrice);
+    if (!Number.isFinite(price)) {
+      continue;
+    }
+
+    const timestamp = new Date(rawTimestamp);
+    if (Number.isNaN(timestamp.getTime())) {
+      continue;
+    }
+
+    const normalizedSourceTimestamp =
+      typeof rawSourceTimestamp === 'string' &&
+        !Number.isNaN(new Date(rawSourceTimestamp).getTime())
+        ? new Date(rawSourceTimestamp).toISOString()
+        : undefined;
+
+    result.push({
+      exchange: rawExchange as Exchange,
+      symbol: rawSymbol,
+      price,
+      timestamp: timestamp.toISOString(),
+      sourceTimestamp: normalizedSourceTimestamp,
+    });
   }
 
-  const price = Number(rawPrice);
-  if (!Number.isFinite(price)) {
-    return null;
-  }
-
-  const timestamp = new Date(rawTimestamp);
-  if (Number.isNaN(timestamp.getTime())) {
-    return null;
-  }
-
-  const normalizedSourceTimestamp =
-    typeof rawSourceTimestamp === 'string' &&
-      !Number.isNaN(new Date(rawSourceTimestamp).getTime())
-      ? new Date(rawSourceTimestamp).toISOString()
-      : undefined;
-
-  return {
-    exchange: rawExchange as Exchange,
-    symbol: rawSymbol,
-    price,
-    timestamp: timestamp.toISOString(),
-    sourceTimestamp: normalizedSourceTimestamp,
-  };
+  return result;
 }
 
 function getFreshness(exchange: Exchange, timestamp: string, nowMs: number): PriceFreshness {
@@ -238,49 +245,79 @@ export function useTonPriceStream({
     socket.onmessage = (event) => {
       try {
         const rawPayload = JSON.parse(event.data);
-        const point = normalizeIncomingPoint(rawPayload);
+        const points = normalizeIncomingPoints(rawPayload);
 
-        if (!point) {
+        if (points.length === 0) {
           return;
         }
 
-        if (point.symbol !== symbol) {
+        const relevantPoints = points.filter(
+          (point) => point.symbol === symbol && exchanges.includes(point.exchange),
+        );
+
+        if (relevantPoints.length === 0) {
           return;
         }
 
-        if (!exchanges.includes(point.exchange)) {
-          return;
-        }
+        setPoints((current) => {
+          let next = current;
 
-        setPoints((current) => trimPoints(upsertLivePoint(current, point), range));
-
-        setBaseLatestMap((current) => {
-          const existing = current[point.exchange];
-          const existingFreshnessMs = existing
-            ? (toMs(getFreshnessTimestamp(existing)) ?? -Infinity)
-            : -Infinity;
-          const incomingFreshnessMs =
-            toMs(getFreshnessTimestamp(point)) ?? -Infinity;
-
-          if (incomingFreshnessMs < existingFreshnessMs) {
-            return current;
+          for (const point of relevantPoints) {
+            next = upsertLivePoint(next, point);
           }
 
-          return {
-            ...current,
-            [point.exchange]: {
-              price: point.price,
-              timestamp: point.timestamp,
-              sourceTimestamp: point.sourceTimestamp,
-            },
-          };
+          return trimPoints(next, range);
+        });
+
+        setBaseLatestMap((current) => {
+          let next = current;
+
+          for (const point of relevantPoints) {
+            const existing = next[point.exchange];
+            const existingFreshnessMs = existing
+              ? (toMs(getFreshnessTimestamp(existing)) ?? -Infinity)
+              : -Infinity;
+            const incomingFreshnessMs =
+              toMs(getFreshnessTimestamp(point)) ?? -Infinity;
+
+            if (incomingFreshnessMs < existingFreshnessMs) {
+              continue;
+            }
+
+            next = {
+              ...next,
+              [point.exchange]: {
+                price: point.price,
+                timestamp: point.timestamp,
+                sourceTimestamp: point.sourceTimestamp,
+              },
+            };
+          }
+
+          return next;
         });
 
         setLastUpdateAt((current) => {
           const currentMs = current ? (toMs(current) ?? -Infinity) : -Infinity;
-          const incomingMs = toMs(point.timestamp) ?? -Infinity;
+          const incomingMs = Math.max(
+            ...relevantPoints.map((point) => toMs(point.timestamp) ?? -Infinity),
+          );
 
-          return incomingMs >= currentMs ? point.timestamp : current;
+          if (!Number.isFinite(incomingMs)) {
+            return current;
+          }
+
+          const latestTimestamp = relevantPoints.reduce((latest, point) => {
+            if (!latest) {
+              return point.timestamp;
+            }
+
+            return (toMs(point.timestamp) ?? -Infinity) >= (toMs(latest) ?? -Infinity)
+              ? point.timestamp
+              : latest;
+          }, current ?? relevantPoints[0].timestamp);
+
+          return incomingMs >= currentMs ? latestTimestamp : current;
         });
 
         setNowMs(Date.now());

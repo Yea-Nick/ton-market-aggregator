@@ -8,11 +8,31 @@ export interface ChartRow {
   dedust: number | null;
 }
 
-const CHART_STALE_AFTER_MS: Record<Exchange, number> = {
-  bybit: 10_000,
-  bitget: 10_000,
-  stonfi: 15_000,
-  dedust: 15_000,
+const CHART_STALE_AFTER_MS: Record<TimeRange, Record<Exchange, number>> = {
+  '15m': {
+    bybit: 10_000,
+    bitget: 10_000,
+    stonfi: 15_000,
+    dedust: 15_000,
+  },
+  '1h': {
+    bybit: 20_000,
+    bitget: 20_000,
+    stonfi: 30_000,
+    dedust: 30_000,
+  },
+  '4h': {
+    bybit: 60_000,
+    bitget: 60_000,
+    stonfi: 90_000,
+    dedust: 90_000,
+  },
+  '24h': {
+    bybit: 120_000,
+    bitget: 120_000,
+    stonfi: 180_000,
+    dedust: 180_000,
+  },
 };
 
 type ExchangeState = {
@@ -48,7 +68,11 @@ function getFreshnessTimestampMs(point: PricePoint): number | null {
   return toMs(point.sourceTimestamp) ?? toMs(point.timestamp);
 }
 
-export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[] {
+function getChartStaleAfterMs(range: TimeRange, exchange: Exchange): number {
+  return CHART_STALE_AFTER_MS[range][exchange];
+}
+
+export function toChartRows(points: PricePoint[], range: TimeRange): ChartRow[] {
   if (points.length === 0) {
     return [];
   }
@@ -143,7 +167,9 @@ export function toChartRows(points: PricePoint[], _range: TimeRange): ChartRow[]
       const ageMs = rowTimestampMs - previous.freshnessTimestampMs;
 
       nextRow[exchange] =
-        ageMs <= CHART_STALE_AFTER_MS[exchange] ? previous.price : null;
+        ageMs <= getChartStaleAfterMs(range, exchange)
+          ? previous.price
+          : null;
     }
 
     rows.push(nextRow);

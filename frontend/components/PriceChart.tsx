@@ -65,8 +65,8 @@ export function PriceChart({ rows, exchanges, range }: PriceChartProps) {
             axisLine={{ stroke: '#2a2a2e' }}
           />
           <Tooltip
-            labelFormatter={(value: string) =>
-              mounted ? formatTooltipTime(value) : ''
+            labelFormatter={(label) =>
+              mounted && typeof label === 'string' ? formatTooltipTime(label) : ''
             }
             formatter={(value, name) => {
               const formattedValue =

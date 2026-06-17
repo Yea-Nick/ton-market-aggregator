@@ -19,11 +19,13 @@ export class BitgetAdapter implements ExchangeAdapter {
   readonly name = 'bitget' as const;
 
   async fetchPrice(symbol: string): Promise<FetchedPrice> {
+    const requestSymbol = (symbol === 'TONUSDT') ? 'GRAMUSDT' : symbol;
+
     const payload = await http.getJson<BitgetTickersResponse>({
       baseURL: env.exchanges.bitget.baseUrl,
       url: '/api/v2/spot/market/tickers',
       params: {
-        symbol,
+        symbol: requestSymbol,
       },
       headers: {
         Accept: 'application/json',

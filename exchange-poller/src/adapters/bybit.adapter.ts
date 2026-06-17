@@ -19,12 +19,14 @@ export class BybitAdapter implements ExchangeAdapter {
   readonly name = 'bybit' as const;
 
   async fetchPrice(symbol: string): Promise<FetchedPrice> {
+    const requestSymbol = (symbol === 'TONUSDT') ? 'GRAMUSDT' : symbol;
+
     const payload = await http.getJson<BybitTickersResponse>({
       baseURL: env.exchanges.bybit.baseUrl,
       url: '/v5/market/tickers',
       params: {
         category: 'spot',
-        symbol,
+        symbol: requestSymbol,
       },
       headers: {
         Accept: 'application/json',
